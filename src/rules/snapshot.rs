@@ -62,14 +62,20 @@ impl SnapshotStore {
     }
 
     /// Resolve the full snapshot (loader + rate sheets + matrix metadata).
+    #[tracing::instrument(
+        name = "snapshot.resolve",
+        skip(self),
+        fields(revision = ?revision, cache_hit = tracing::field::Empty)
+    )]
     pub async fn snapshot_for(&self, revision: Revision) -> Result<Arc<Snapshot>, anyhow::Error> {
         let cache_key = self.fingerprint(revision).await?;
-        if let Some(snapshot) = self
+        let cache_hit = self
             .cache
             .read()
             .ok()
-            .and_then(|c| c.get(&cache_key).cloned())
-        {
+            .and_then(|c| c.get(&cache_key).cloned());
+        tracing::Span::current().record("cache_hit", cache_hit.is_some());
+        if let Some(snapshot) = cache_hit {
             return Ok(snapshot);
         }
         let snapshot = self.build(revision, cache_key.clone()).await?;
@@ -115,6 +121,7 @@ impl SnapshotStore {
     }
 
     /// `max(updated_at):count` per artifact table at one status, in one query.
+    #[tracing::instrument(name = "snapshot.fingerprint", skip(self))]
     async fn status_fingerprint(&self, status: &str) -> anyhow::Result<String> {
         let rows: Vec<(String, Option<chrono::DateTime<chrono::Utc>>, i64)> = sqlx::query_as(
             "SELECT t, max(updated_at), count(*) FROM (
@@ -135,6 +142,16 @@ impl SnapshotStore {
             .join(","))
     }
 
+    #[tracing::instrument(
+        name = "snapshot.build",
+        skip(self, fingerprint),
+        fields(
+            revision = ?revision,
+            decisions = tracing::field::Empty,
+            rate_sheets = tracing::field::Empty,
+            matrices = tracing::field::Empty
+        )
+    )]
     async fn build(
         &self,
         revision: Revision,
@@ -299,6 +316,10 @@ impl SnapshotStore {
             rate_sheets,
             matrices,
         };
+        tracing::Span::current()
+            .record("decisions", rows.len())
+            .record("rate_sheets", snapshot.rate_sheets.len())
+            .record("matrices", snapshot.matrices.len());
         tracing::debug!(?revision, decisions = rows.len(), "built decision snapshot");
         Ok(Arc::new(snapshot))
     }

@@ -10,6 +10,20 @@ axum = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 futures = "0.3"
+opentelemetry = "0.33"
+opentelemetry-appender-tracing = "0.33"
+opentelemetry-otlp = { version = "0.33", default-features = false, features = [
+    "grpc-tonic",
+    "http-proto",
+    "hyper-client",
+    "trace",
+    "logs",
+] }
+opentelemetry_sdk = { version = "0.33", features = [
+    "rt-tokio",
+    "logs",
+    "experimental_logs_batch_log_processor_with_async_runtime",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", features = [
@@ -24,6 +38,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 tracing = "0.1"
+tracing-opentelemetry = "0.34"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 zen-engine = "2"
