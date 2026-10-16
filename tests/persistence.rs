@@ -338,4 +338,34 @@ async fn publish_lifecycle() {
         .as_array()
         .unwrap()
         .contains(&json!(DECISION_KEY)));
+
+    // End-of-test cleanup — don't leak fixtures into the dev catalog.
+    sqlx::query("DELETE FROM decisions WHERE key = $1")
+        .bind(DECISION_KEY)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM expressions WHERE key = $1")
+        .bind(EXPR_KEY)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for table in ["decisions", "expressions"] {
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE publication_id IN
+             (SELECT id FROM publications WHERE label LIKE 'p2-test-%')"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("DELETE FROM publications WHERE label LIKE 'p2-test-%'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM products WHERE code = $1")
+        .bind(PRODUCT)
+        .execute(&pool)
+        .await
+        .unwrap();
 }

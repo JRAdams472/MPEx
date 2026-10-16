@@ -418,4 +418,35 @@ async fn pricing_lifecycle() {
     assert_eq!(status, StatusCode::OK);
     assert!(detail["draft"].is_null());
     assert_eq!(detail["history"].as_array().unwrap().len(), 2);
+
+    // End-of-test cleanup — don't leak fixtures into the dev catalog.
+    for (table, key) in [
+        ("matrices", MATRIX_KEY),
+        ("matrices", SHARED_KEY),
+        ("rate_sheets", PRODUCT),
+    ] {
+        sqlx::query(&format!("DELETE FROM {table} WHERE key = $1"))
+            .bind(key)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    for table in ["decisions", "expressions", "matrices", "rate_sheets"] {
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE publication_id IN
+             (SELECT id FROM publications WHERE label LIKE 'p4-test-%')"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("DELETE FROM publications WHERE label LIKE 'p4-test-%'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM products WHERE code = $1")
+        .bind(PRODUCT)
+        .execute(&pool)
+        .await
+        .unwrap();
 }

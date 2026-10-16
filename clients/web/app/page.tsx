@@ -41,6 +41,11 @@ const SECTIONS = [
     title: "Publications",
     desc: "Named point-in-time snapshots of every published artifact.",
   },
+  {
+    href: "/sandbox",
+    title: "Sandbox",
+    desc: "Edit a loan scenario, run eligibility, then price with the LLPA waterfall.",
+  },
 ];
 
 export default function Home() {

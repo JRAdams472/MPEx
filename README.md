@@ -45,6 +45,17 @@ cargo run
 
 Web UI: http://localhost:3000 · API: http://localhost:8080 (`/healthz`, `/api/health`).
 
+## Verification
+
+```bash
+cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+cd clients/web && npm run lint && npm run typecheck && npm test -- --ci && npm run build
+
+# e2e (Playwright): needs the dev stack up and seeded —
+#   docker compose up db -d && RUN_SEED=1 cargo run   (or docker compose up api)
+cd clients/web && npm run e2e    # specs in e2e/, auto-starts `next dev`
+```
+
 ## Layout
 
 - `src/` — Rust binary (`api/`, `domain/`, `rules/`, `pricing/`)
@@ -55,8 +66,14 @@ Web UI: http://localhost:3000 · API: http://localhost:8080 (`/healthz`, `/api/h
 
 ## Status
 
-P1 (loan model + eligibility spine), P2 (rules persistence & publications),
-P3 (adjustment matrices), and P4 (rate sheets + pricing pipeline) are in.
+All planned phases are in: P1 loan model + eligibility spine, P2 rules
+persistence & publications, P3 adjustment matrices, P4 rate sheets + pricing
+pipeline, P5/P6 the admin UI (JDM decision editor, expression library,
+matrix/rate-sheet grid editors, publications history with `asOf` picker), and
+P7 the pricer sandbox (`/sandbox`: scenario editor → eligibility → pricing
+with decision traces and the per-line LLPA waterfall) plus Playwright e2e and
+determinism/concurrency tests (`tests/hardening.rs`).
+
 `POST /api/publications` atomically publishes changed drafts under a named
 publication; `asOf` resolves point-in-time snapshots; matrix specs compile to
 Zen decision tables; `POST /api/evaluate/pricing` returns per-rate pricing
