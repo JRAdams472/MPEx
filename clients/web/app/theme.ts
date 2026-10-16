@@ -2,11 +2,23 @@
 
 import { createTheme } from "@mui/material/styles";
 
+// GitHub-dark-inspired: near-black surfaces, laser-blue accent.
 const theme = createTheme({
   palette: {
-    mode: "light",
-    primary: { main: "#1b4d8a" },
-    secondary: { main: "#2e7d5b" },
+    mode: "dark",
+    primary: { main: "#2f9cff" },
+    secondary: { main: "#79c0ff" },
+    success: { main: "#3fb950" },
+    warning: { main: "#d29922" },
+    error: { main: "#f85149" },
+    background: { default: "#0d1117", paper: "#161b22" },
+    text: { primary: "#e6edf3", secondary: "#9198a1" },
+    divider: "#30363d",
+  },
+  components: {
+    MuiCssBaseline: {
+      styleOverrides: { body: { backgroundColor: "#0d1117" } },
+    },
   },
 });
 

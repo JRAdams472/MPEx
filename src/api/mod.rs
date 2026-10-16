@@ -1,20 +1,33 @@
+mod evaluate;
+mod products;
+
 use axum::extract::State;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
+use std::sync::Arc;
+
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
 use crate::error::AppError;
+use crate::rules::snapshot::SnapshotStore;
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
+    pub snapshots: Arc<SnapshotStore>,
 }
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/api/health", get(health))
+        .route("/api/products", get(products::list))
+        .route("/api/evaluate/eligibility", post(evaluate::eligibility))
+        .route(
+            "/api/validate/expression",
+            post(evaluate::validate_expression),
+        )
         .with_state(state)
 }
 
