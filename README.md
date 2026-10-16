@@ -45,6 +45,25 @@ cargo run
 
 Web UI: http://localhost:3000 · API: http://localhost:8080 (`/healthz`, `/api/health`).
 
+## Observability
+
+`docker compose up` also starts **Seq** (logs, http://localhost:5341) and
+**Jaeger** (traces, http://localhost:16686). The API ships both over OTLP when
+the env flags are set — compose wires them for you:
+
+| Var | Effect |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Trace spans → OTLP/gRPC (compose: `http://jaeger:4317`) |
+| `SEQ_URL` | `tracing` events → OTLP logs — full `v1/logs` path (compose: `http://seq/ingest/otlp/v1/logs`) |
+| `SEQ_API_KEY` | Optional `x-seq-apikey` header for Seq ingest auth |
+| `OTEL_SERVICE_NAME` | Resource `service.name` (default `mpex-api`) |
+
+Unset = stdout JSON only (`docker logs mpex-api-1` keeps working either way).
+Traces cover request handling (TraceLayer), `snapshot.resolve`/`build` per
+revision, `eval.eligibility`/`eval.pricing` fanning out to per-product
+`eval.decision`/`eval.product`/`eval.matrix` spans on the eval threads, and
+`publish.transaction` with stamped-key counts.
+
 ## Verification
 
 ```bash

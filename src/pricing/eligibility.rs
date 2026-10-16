@@ -74,6 +74,18 @@ pub struct EligibilityReport {
 /// Decision output contract: `{ "eligible": bool, "reasons": [...] }` —
 /// `reasons` lists why the product was rejected (typically collected via a
 /// `reasons[]` output column on a fail-condition decision table).
+#[tracing::instrument(
+    name = "eval.eligibility",
+    skip(pool, engine, loan),
+    fields(
+        revision = ?revision,
+        trace,
+        products = tracing::field::Empty,
+        eligible = tracing::field::Empty,
+        ineligible = tracing::field::Empty,
+        elapsed_ms = tracing::field::Empty
+    )
+)]
 pub async fn evaluate_eligibility(
     pool: &PgPool,
     engine: DecisionEngine,
@@ -86,6 +98,7 @@ pub async fn evaluate_eligibility(
         sqlx::query_as("SELECT code, name FROM products WHERE active ORDER BY code")
             .fetch_all(pool)
             .await?;
+    tracing::Span::current().record("products", products.len());
 
     let opts = EvaluationSerializedOptions {
         trace: if trace {
@@ -109,12 +122,33 @@ pub async fn evaluate_eligibility(
                 code: code.clone(),
                 name: name.clone(),
             };
+            // Span is Send+Sync — the child span is created and entered inside
+            // the blocking task so the eval stays under the request trace.
+            let parent = tracing::Span::current();
             tokio::task::spawn_blocking(move || {
+                let span = tracing::info_span!(
+                    parent: &parent,
+                    "eval.decision",
+                    product = %product.code,
+                    key = %key,
+                    ok = tracing::field::Empty,
+                    eligible = tracing::field::Empty
+                );
+                let _g = span.enter();
                 let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .expect("eval runtime");
                 let outcome = rt.block_on(engine.evaluate_serialized(&key, loan.into(), opts));
+                let eligible = outcome
+                    .as_ref()
+                    .ok()
+                    .and_then(|v| v.get("result"))
+                    .and_then(|r| r.get("eligible"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                span.record("ok", outcome.is_ok());
+                span.record("eligible", eligible);
                 (product, outcome)
             })
         })
@@ -186,6 +220,11 @@ pub async fn evaluate_eligibility(
         }
     }
 
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    tracing::Span::current()
+        .record("eligible", eligible.len())
+        .record("ineligible", ineligible.len())
+        .record("elapsed_ms", elapsed_ms);
     Ok(EligibilityReport {
         revision: match revision {
             EvalRevision::Latest => "latest".to_string(),
@@ -194,7 +233,7 @@ pub async fn evaluate_eligibility(
         },
         eligible,
         ineligible,
-        elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
+        elapsed_ms,
     })
 }
 

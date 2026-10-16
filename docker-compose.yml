@@ -25,6 +25,10 @@ services:
       CORS_ORIGIN: http://localhost:3000
       RUN_SEED: "1"
       SEED_DIR: /seed
+      # Observability exporters (both optional; unset = stdout JSON only).
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      SEQ_URL: http://seq/ingest/otlp/v1/logs
+      # SEQ_API_KEY: ""   # set when Seq ingest auth is configured
     volumes:
       - ./seed:/seed:ro
     ports:
@@ -42,5 +46,23 @@ services:
     depends_on:
       - api
 
+  seq:
+    image: datalust/seq:2025.2
+    environment:
+      ACCEPT_EULA: "Y"
+      SEQ_FIRSTRUN_NOAUTHENTICATION: "true" # local dev only — no UI/ingest auth
+    ports:
+      - "5341:80"   # UI + ingest
+    volumes:
+      - seqdata:/seq/data
+
+  jaeger:
+    image: jaegertracing/jaeger:2.13.0
+    ports:
+      - "16686:16686"  # UI
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+
 volumes:
   pgdata:
+  seqdata:

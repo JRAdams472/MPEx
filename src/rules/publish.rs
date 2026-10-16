@@ -27,6 +27,17 @@ pub struct Publication {
 /// publication timestamp, commit. New rows bump `max(updated_at)`, which
 /// naturally invalidates the snapshot fingerprint cache — no explicit cache
 /// eviction needed.
+#[tracing::instrument(
+    name = "publish.transaction",
+    skip(pool),
+    fields(
+        id = tracing::field::Empty,
+        decisions = tracing::field::Empty,
+        expressions = tracing::field::Empty,
+        matrices = tracing::field::Empty,
+        rate_sheets = tracing::field::Empty
+    )
+)]
 pub async fn publish(pool: &PgPool, label: &str) -> Result<Publication, AppError> {
     let label = label.trim();
     if label.is_empty() {
@@ -150,6 +161,12 @@ pub async fn publish(pool: &PgPool, label: &str) -> Result<Publication, AppError
     }
 
     tx.commit().await?;
+    tracing::Span::current()
+        .record("id", tracing::field::display(id))
+        .record("decisions", decisions.len())
+        .record("expressions", expressions.len())
+        .record("matrices", matrices.len())
+        .record("rate_sheets", rate_sheets.len());
     tracing::info!(
         publication = %id,
         decisions = decisions.len(),

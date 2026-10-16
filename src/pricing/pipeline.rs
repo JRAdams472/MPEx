@@ -83,6 +83,17 @@ pub struct PricingParams<'a> {
 ///
 /// Evaluation runs on spawn_blocking current-thread runtimes (zen `Variable`
 /// is `Rc`-based/`!Send`) — no DB I/O inside.
+#[tracing::instrument(
+    name = "eval.pricing",
+    skip(pool, snapshot, engine, loan, params),
+    fields(
+        revision = ?revision,
+        products = params.products.len(),
+        priced = tracing::field::Empty,
+        unpriced = tracing::field::Empty,
+        elapsed_ms = tracing::field::Empty
+    )
+)]
 pub async fn evaluate_pricing(
     pool: &PgPool,
     snapshot: &Snapshot,
@@ -229,7 +240,18 @@ pub async fn evaluate_pricing(
         .map(|job| {
             let engine = engine.clone();
             let loan = loan.clone();
+            // Span is Send+Sync — the child span is created and entered inside
+            // the blocking task so the eval stays under the request trace.
+            let parent = tracing::Span::current();
             tokio::task::spawn_blocking(move || {
+                let span = tracing::info_span!(
+                    parent: &parent,
+                    "eval.product",
+                    product = %job.product.code,
+                    rates = job.rates.len(),
+                    matrices = job.matrix_keys.len()
+                );
+                let _g = span.enter();
                 let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
@@ -244,12 +266,23 @@ pub async fn evaluate_pricing(
                     let mut adjustments = Vec::new();
                     let mut total = 0.0;
                     for key in &job.matrix_keys {
+                        let mspan = tracing::info_span!(
+                            "eval.matrix",
+                            product = %job.product.code,
+                            matrix = %key,
+                            rate,
+                            ok = tracing::field::Empty,
+                            value = tracing::field::Empty
+                        );
+                        let _mg = mspan.enter();
                         match rt.block_on(engine.evaluate_serialized(key, ctx.clone().into(), opts))
                         {
                             Ok(out) => {
                                 let result = &out["result"];
                                 let value = result.get("value").and_then(Value::as_f64);
+                                mspan.record("ok", true);
                                 if let Some(v) = value {
+                                    mspan.record("value", v);
                                     total += v;
                                 }
                                 adjustments.push(AdjustmentLine {
@@ -268,14 +301,17 @@ pub async fn evaluate_pricing(
                                     error: None,
                                 });
                             }
-                            Err(e) => adjustments.push(AdjustmentLine {
-                                matrix: key.clone(),
-                                value: None,
-                                adjustments: vec![],
-                                performance: None,
-                                trace: None,
-                                error: Some(e.to_string()),
-                            }),
+                            Err(e) => {
+                                mspan.record("ok", false);
+                                adjustments.push(AdjustmentLine {
+                                    matrix: key.clone(),
+                                    value: None,
+                                    adjustments: vec![],
+                                    performance: None,
+                                    trace: None,
+                                    error: Some(e.to_string()),
+                                });
+                            }
                         }
                     }
                     let base = job.sheet.price(*rate, job.term).unwrap_or(0.0);
@@ -312,6 +348,11 @@ pub async fn evaluate_pricing(
     }
     priced.sort_by(|a, b| a.product.code.cmp(&b.product.code));
 
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    tracing::Span::current()
+        .record("priced", priced.len())
+        .record("unpriced", unpriced.len())
+        .record("elapsed_ms", elapsed_ms);
     Ok(PricingReport {
         revision: match revision {
             EvalRevision::Latest => "latest".to_string(),
@@ -320,6 +361,6 @@ pub async fn evaluate_pricing(
         },
         priced,
         unpriced,
-        elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
+        elapsed_ms,
     })
 }
