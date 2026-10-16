@@ -138,7 +138,11 @@ async fn seed(pool: &PgPool, fx: &Fixture) -> Router {
         &app,
         "PUT",
         &format!("/api/matrices/{}", fx.matrix),
+        // productCode scopes the matrix to this fixture's product — a shared
+        // (null) matrix would attach to the sibling test's pricing response
+        // and make its output diverge mid-run.
         Some(json!({
+            "productCode": fx.product,
             "spec": {
                 "rows": [{"id": "hi", "expr": "loan.ltv > 80"}],
                 "cols": [{"id": "fico", "expr": "borrower.fico >= 740"}],
