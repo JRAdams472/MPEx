@@ -22,3 +22,6 @@ Thumbs.db
 .idea/
 .vscode/
 .playwright-mcp/
+
+# Devin local MCP config (contains secrets)
+.devin/mcp_config.local.json

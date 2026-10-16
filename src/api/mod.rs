@@ -1,5 +1,8 @@
+mod decisions;
 mod evaluate;
+mod expressions;
 mod products;
+mod publications;
 
 use axum::extract::State;
 use axum::routing::{get, post};
@@ -11,6 +14,21 @@ use sqlx::PgPool;
 
 use crate::error::AppError;
 use crate::rules::snapshot::SnapshotStore;
+
+/// Admin listing revision selector: None = working drafts, Some(ts) = the
+/// published snapshot as of that timestamp ("draft" also maps to None).
+fn parse_admin_as_of(
+    as_of: Option<&str>,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>, AppError> {
+    match as_of {
+        None | Some("draft") => Ok(None),
+        Some(ts) => chrono::DateTime::parse_from_rfc3339(ts)
+            .map(|t| Some(t.with_timezone(&chrono::Utc)))
+            .map_err(|_| {
+                AppError::BadRequest(format!("asOf must be 'draft' or RFC3339, got {ts:?}"))
+            }),
+    }
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -28,6 +46,25 @@ pub fn router(state: AppState) -> Router {
             "/api/validate/expression",
             post(evaluate::validate_expression),
         )
+        .route("/api/decisions", get(decisions::list))
+        .route(
+            "/api/decisions/{key}",
+            get(decisions::get)
+                .put(decisions::put)
+                .delete(decisions::delete),
+        )
+        .route("/api/expressions", get(expressions::list))
+        .route(
+            "/api/expressions/{key}",
+            get(expressions::get)
+                .put(expressions::put)
+                .delete(expressions::delete),
+        )
+        .route(
+            "/api/publications",
+            get(publications::list).post(publications::create),
+        )
+        .route("/api/publications/{id}", get(publications::get))
         .with_state(state)
 }
 

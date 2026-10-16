@@ -1,21 +1,12 @@
-mod api;
-mod config;
-mod db;
-mod domain;
-mod error;
-mod pricing;
-mod rules;
-mod seed;
-
 use std::sync::Arc;
 
 use anyhow::Context;
 use axum::http::HeaderValue;
+use mpex::rules::snapshot::SnapshotStore;
+use mpex::{api, config, db, seed};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
-
-use crate::rules::snapshot::SnapshotStore;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
