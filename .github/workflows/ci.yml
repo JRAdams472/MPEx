@@ -50,3 +50,93 @@ jobs:
       - run: npm run typecheck
       - run: npm test -- --ci
       - run: npm run build
+
+  e2e:
+    name: E2E — Playwright (seeded stack)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: mpex
+          POSTGRES_PASSWORD: mpex
+          POSTGRES_DB: mpex
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U mpex -d mpex"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    env:
+      DATABASE_URL: postgres://mpex:mpex@localhost:5432/mpex
+      # Baked into the client bundle at `next build` time.
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build
+      - name: Start API (seeded)
+        run: |
+          RUN_SEED=1 ./target/debug/mpex &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8080/healthz && exit 0 || sleep 1
+          done
+          echo "API did not come up"; exit 1
+      # The SQL seed covers products + decisions only; create the matrix and
+      # rate sheet through the API (same path the UI uses) so the sandbox
+      # specs have a real pricing waterfall to assert on.
+      - name: Seed demo artifacts + publish
+        run: |
+          curl -sf -X PUT http://localhost:8080/api/matrices/llpa.fico-ltv \
+            -H 'content-type: application/json' -d '{
+              "spec": {
+                "rows": [{"id":"hi","expr":"borrower.fico >= 740"},{"id":"mid","expr":"borrower.fico >= 700"}],
+                "cols": [{"id":"ltv80","expr":"loan.ltv <= 80"},{"id":"ltv90","expr":"loan.ltv <= 90"}],
+                "cells": {"hi:ltv80":-0.25,"hi:ltv90":0.0,"mid:ltv80":-0.125,"mid:ltv90":0.25},
+                "op": "sum"
+              }
+            }' >/dev/null
+          curl -sf -X PUT http://localhost:8080/api/rate-sheets/CONV30 \
+            -H 'content-type: application/json' -d '{
+              "spec": {
+                "rates": [6.25, 6.5, 6.75],
+                "lockTerms": [30, 45, 60],
+                "prices": {
+                  "6.25:30":100.375,"6.25:45":100.125,"6.25:60":99.875,
+                  "6.5:30":100.0,"6.5:45":99.75,"6.5:60":99.5,
+                  "6.75:30":99.5,"6.75:45":99.25,"6.75:60":99.125
+                }
+              }
+            }' >/dev/null
+          curl -sf -X POST http://localhost:8080/api/publications \
+            -H 'content-type: application/json' -d '{"label":"e2e-seed"}' >/dev/null
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: clients/web/package-lock.json
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('clients/web/package-lock.json') }}
+      - run: npm ci
+        working-directory: clients/web
+      - run: npm run build
+        working-directory: clients/web
+      - name: Start web
+        run: |
+          npm start &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:3000 >/dev/null && exit 0 || sleep 1
+          done
+          echo "Web did not come up"; exit 1
+        working-directory: clients/web
+      - run: npx playwright install --with-deps chromium
+        working-directory: clients/web
+      - run: npx playwright test
+        working-directory: clients/web
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: clients/web/playwright-report
+          retention-days: 7
