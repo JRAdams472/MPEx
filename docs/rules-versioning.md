@@ -1,14 +1,15 @@
 # Rules versioning & publications
 
-MPEx stores rule artifacts (decisions, expressions, later matrices and rate
-sheets) as **append-only rows keyed `(key, status, published_at)`**. Nothing
-published is ever updated — history accumulates and `asOf` resolves a
-point-in-time view over it.
+MPEx stores rule artifacts (decisions, expressions, matrices, rate sheets) as
+**append-only rows keyed `(key, status, published_at)`**. Nothing published is
+ever updated — history accumulates and `asOf` resolves a point-in-time view
+over it.
 
 ## Lifecycle
 
 ```
- PUT /api/{decisions,expressions}/{key}   →  mutable draft (one per key)
+ PUT /api/{decisions,expressions,matrices,rate-sheets}/{key}
+                                           →  mutable draft (one per key)
  POST /api/publications                   →  atomic publish of every *changed* draft
  GET  ...?asOf=<rfc3339>                  →  published snapshot at a timestamp
 ```
@@ -45,6 +46,11 @@ point-in-time view over it.
 | `PUT /api/matrices/{key}` | Upsert draft (`{kind?, productCode?, spec}`; spec validated + compiled to JDM at write) |
 | `DELETE /api/matrices/{key}` | Delete draft only |
 | `POST /api/simulate/matrix` | `{spec, context}` → `{result, cells[]}` editor preview with per-cell match detail |
+| `GET /api/rate-sheets[?asOf=]` | Draft list, or published snapshot at `asOf` |
+| `GET /api/rate-sheets/{key}` | `{draft, published, history[]}` (`key` = product code) |
+| `PUT /api/rate-sheets/{key}` | Upsert draft (`{spec}`; spec validated) |
+| `DELETE /api/rate-sheets/{key}` | Delete draft only |
+| `POST /api/evaluate/pricing` | `{loan, products[], rate?, lockTermDays?, asOf?, trace?}` → per-rate lines + LLPA waterfall |
 | `GET /api/publications` | Publications with artifact counts |
 | `GET /api/publications/{id}` | Publication detail + stamped keys |
 | `POST /api/publications` | `{label}` → atomic publish → `201` or `409` |
@@ -74,6 +80,39 @@ At write time the spec compiles to a decision table: one input column with no
 mergeable object). An aggregate node emits `{adjustments, value, op}`. Drafts
 and published rows both carry the compiled `jdm`, so previews evaluate exactly
 what a publish ships.
+
+## Rate sheets & pricing
+
+`rate_sheets` are per-product data artifacts — `key` is the product code, so a
+product has exactly one sheet. The spec is a rate × lock-term price grid:
+
+```jsonc
+{
+  "rates": [6.5, 6.75],
+  "lockTerms": [30, 45],
+  "prices": {"6.5:30": 100.0, "6.5:45": 99.75, "6.75:30": 99.5}
+}
+```
+
+Missing cells mean the combo isn't offered. They version and publish like
+every other artifact, but ship no JDM — snapshots resolve their `spec` beside
+the decision loader.
+
+`POST /api/evaluate/pricing` prices the listed `products` in parallel:
+
+1. Base price = the product's sheet at (`rate`, `lockTermDays`). With `rate`
+   omitted, every offered rate gets a **line**. `lockTermDays` falls back to
+   `loan.scenario.lockTermDays`, then the sheet's shortest term.
+2. Every `llpa` matrix scoped to the product (`productCode` = the product, or
+   NULL = shared) evaluates with `loan.rate` / `loan.scenario.lockTermDays`
+   injected — matrix expressions can key on them.
+3. `price = basePrice + Σ matrix values`, with an `adjustments[]` waterfall
+   entry per matrix (`{matrix, value, adjustments}`).
+
+Products without a sheet (or an offered rate/term) land in `unpriced[]` with a
+reason. Responses memoize on `(snapshot fingerprint, loan, products, rate,
+lockTerm, trace)` — evaluation is pure, and a publish bumps the fingerprint so
+stale entries never serve.
 
 ## Expressions
 

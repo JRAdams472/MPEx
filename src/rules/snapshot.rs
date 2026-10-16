@@ -8,20 +8,48 @@ use zen_engine::model::DecisionContent;
 
 use crate::rules::loader::Revision;
 
-/// A revision's full decision set resolved to plain key -> JDM, so evaluation
-/// threads never touch the database. Published snapshots are cached behind a
-/// cheap fingerprint probe (max(updated_at), count) — publishing bumps the
-/// fingerprint and naturally invalidates the cached snapshot.
+/// Matrix identity needed by pricing: which matrices apply to a product.
+#[derive(Debug, Clone)]
+pub struct MatrixMeta {
+    pub key: String,
+    pub kind: String,
+    /// None = shared matrix applying to every product.
+    pub product_code: Option<String>,
+}
+
+/// A revision's artifacts resolved to plain data, so evaluation threads never
+/// touch the database: compiled decision JDM in the loader, rate-sheet specs
+/// keyed by product code, and matrix metadata for product scoping. Published
+/// snapshots are cached behind a cheap fingerprint probe (max(updated_at),
+/// count across all artifact tables) — publishing bumps the fingerprint and
+/// naturally invalidates the cached snapshot.
+pub struct Snapshot {
+    pub fingerprint: String,
+    pub loader: Arc<CachedLoader>,
+    /// product code -> rate sheet spec.
+    pub rate_sheets: HashMap<String, serde_json::Value>,
+    /// All loaded matrices (decisions aren't scoped to products here).
+    pub matrices: Vec<MatrixMeta>,
+}
+
 pub struct SnapshotStore {
     pool: PgPool,
-    cache: RwLock<HashMap<String, Arc<CachedLoader>>>,
+    cache: RwLock<HashMap<String, Arc<Snapshot>>>,
+    /// Memoized pricing responses keyed (fingerprint, loan, products, rate,
+    /// lockTerm) — safe because evaluation is a pure function of those.
+    memo: RwLock<HashMap<String, Arc<serde_json::Value>>>,
 }
+
+/// Memoized pricing responses live as long as their snapshot fingerprint
+/// stays current; cap the map so drafts churn can't grow it unboundedly.
+const MEMO_CAP: usize = 512;
 
 impl SnapshotStore {
     pub fn new(pool: PgPool) -> Self {
         Self {
             pool,
             cache: RwLock::new(HashMap::new()),
+            memo: RwLock::new(HashMap::new()),
         }
     }
 
@@ -30,73 +58,88 @@ impl SnapshotStore {
         &self,
         revision: Revision,
     ) -> Result<Arc<dyn DecisionLoader>, anyhow::Error> {
+        Ok(self.snapshot_for(revision).await?.loader.clone())
+    }
+
+    /// Resolve the full snapshot (loader + rate sheets + matrix metadata).
+    pub async fn snapshot_for(&self, revision: Revision) -> Result<Arc<Snapshot>, anyhow::Error> {
         let cache_key = self.fingerprint(revision).await?;
-        if let Some(loader) = self
+        if let Some(snapshot) = self
             .cache
             .read()
             .ok()
             .and_then(|c| c.get(&cache_key).cloned())
         {
-            return Ok(loader);
+            return Ok(snapshot);
         }
-        let loader = self.build(revision).await?;
+        let snapshot = self.build(revision, cache_key.clone()).await?;
         if let Ok(mut cache) = self.cache.write() {
-            cache.insert(cache_key, loader.clone());
+            cache.insert(cache_key, snapshot.clone());
         }
-        Ok(loader)
+        Ok(snapshot)
+    }
+
+    /// Pricing memo lookup — callers key on snapshot fingerprint plus the
+    /// request tuple, so a publish invalidates entries without eviction.
+    pub fn memo_get(&self, key: &str) -> Option<Arc<serde_json::Value>> {
+        self.memo.read().ok()?.get(key).cloned()
+    }
+
+    pub fn memo_put(&self, key: String, value: serde_json::Value) {
+        if let Ok(mut memo) = self.memo.write() {
+            if memo.len() >= MEMO_CAP {
+                memo.clear();
+            }
+            memo.insert(key, Arc::new(value));
+        }
     }
 
     /// Latest-published and draft fingerprints can change; asOf snapshots are
     /// immutable by definition so their key is the timestamp itself. The
-    /// fingerprint covers every loaded artifact kind (decisions + matrices).
+    /// fingerprint covers every loaded artifact kind.
     async fn fingerprint(&self, revision: Revision) -> anyhow::Result<String> {
         match revision {
             Revision::AsOf(ts) => Ok(format!("asof:{}", ts.to_rfc3339())),
             Revision::Draft | Revision::LatestPublished => {
-                let status = match revision {
-                    Revision::Draft => "draft",
-                    _ => "published",
-                };
-                let (du, dc, mu, mc): (
-                    Option<chrono::DateTime<chrono::Utc>>,
-                    i64,
-                    Option<chrono::DateTime<chrono::Utc>>,
-                    i64,
-                ) = sqlx::query_as(
-                    "SELECT (SELECT max(updated_at) FROM decisions WHERE status = $1),
-                            (SELECT count(*) FROM decisions WHERE status = $1),
-                            (SELECT max(updated_at) FROM matrices WHERE status = $1),
-                            (SELECT count(*) FROM matrices WHERE status = $1)",
-                )
-                .bind(status)
-                .fetch_one(&self.pool)
-                .await?;
+                let published = self.status_fingerprint("published").await?;
                 // Latest also falls back to drafts for keys lacking a
-                // published revision, so its fingerprint must cover both sets.
-                let draft_fp = if revision == Revision::LatestPublished {
-                    let (ddu, ddc, dmu, dmc): (
-                        Option<chrono::DateTime<chrono::Utc>>,
-                        i64,
-                        Option<chrono::DateTime<chrono::Utc>>,
-                        i64,
-                    ) = sqlx::query_as(
-                        "SELECT (SELECT max(updated_at) FROM decisions WHERE status = 'draft'),
-                                (SELECT count(*) FROM decisions WHERE status = 'draft'),
-                                (SELECT max(updated_at) FROM matrices WHERE status = 'draft'),
-                                (SELECT count(*) FROM matrices WHERE status = 'draft')",
-                    )
-                    .fetch_one(&self.pool)
-                    .await?;
-                    format!("{ddu:?}:{ddc}:{dmu:?}:{dmc}")
+                // published revision, so its fingerprint covers both sets.
+                let draft = if revision == Revision::LatestPublished {
+                    self.status_fingerprint("draft").await?
                 } else {
                     String::new()
                 };
-                Ok(format!("{revision:?}:{du:?}:{dc}:{mu:?}:{mc}:{draft_fp}"))
+                Ok(format!("{revision:?}:{published}:{draft}"))
             }
         }
     }
 
-    async fn build(&self, revision: Revision) -> anyhow::Result<Arc<CachedLoader>> {
+    /// `max(updated_at):count` per artifact table at one status, in one query.
+    async fn status_fingerprint(&self, status: &str) -> anyhow::Result<String> {
+        let rows: Vec<(String, Option<chrono::DateTime<chrono::Utc>>, i64)> = sqlx::query_as(
+            "SELECT t, max(updated_at), count(*) FROM (
+               SELECT 'decisions' AS t, updated_at FROM decisions WHERE status = $1
+               UNION ALL
+               SELECT 'matrices', updated_at FROM matrices WHERE status = $1
+               UNION ALL
+               SELECT 'rate_sheets', updated_at FROM rate_sheets WHERE status = $1
+             ) s GROUP BY t ORDER BY t",
+        )
+        .bind(status)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|(t, u, c)| format!("{t}={u:?}/{c}"))
+            .collect::<Vec<_>>()
+            .join(","))
+    }
+
+    async fn build(
+        &self,
+        revision: Revision,
+        fingerprint: String,
+    ) -> anyhow::Result<Arc<Snapshot>> {
         // Each kind resolves DISTINCT ON (key) the same way; kinds merge with
         // decisions taking precedence over matrices on a key collision (keys
         // are namespaced by convention, e.g. eligibility.X / llpa.X).
@@ -162,8 +205,101 @@ impl SnapshotStore {
                 .with_context(|| format!("decision {key}: invalid JDM"))?;
             mem.add(key.clone(), content);
         }
-        let cached = CachedLoader::from(Arc::new(mem) as DynamicLoader);
+
+        // Rate sheet specs and matrix scoping metadata resolve with identical
+        // revision semantics — data artifacts live beside the loader, not in it.
+        let sheet_rows: Vec<(String, serde_json::Value)> = match revision {
+            Revision::Draft => {
+                sqlx::query_as(
+                    "SELECT DISTINCT ON (key) key, spec FROM rate_sheets
+                     WHERE status = 'draft' ORDER BY key, updated_at DESC",
+                )
+                .fetch_all(&self.pool)
+                .await?
+            }
+            Revision::AsOf(ts) => {
+                sqlx::query_as(
+                    "SELECT DISTINCT ON (key) key, spec FROM rate_sheets
+                     WHERE status = 'published' AND published_at <= $1
+                     ORDER BY key, published_at DESC",
+                )
+                .bind(ts)
+                .fetch_all(&self.pool)
+                .await?
+            }
+            Revision::LatestPublished => {
+                sqlx::query_as(
+                    "WITH pub AS (
+                       SELECT DISTINCT ON (key) key, spec, 0 AS prio FROM rate_sheets
+                       WHERE status = 'published' ORDER BY key, published_at DESC
+                     ), drf AS (
+                       SELECT DISTINCT ON (key) key, spec, 1 AS prio FROM rate_sheets
+                       WHERE status = 'draft' ORDER BY key, updated_at DESC
+                     )
+                     SELECT DISTINCT ON (key) key, spec FROM (
+                       SELECT * FROM pub UNION ALL SELECT * FROM drf
+                     ) t ORDER BY key, prio",
+                )
+                .fetch_all(&self.pool)
+                .await?
+            }
+        };
+        let rate_sheets: HashMap<String, serde_json::Value> = sheet_rows.into_iter().collect();
+
+        let matrix_rows: Vec<(String, String, Option<String>)> = match revision {
+            Revision::Draft => {
+                sqlx::query_as(
+                    "SELECT DISTINCT ON (key) key, kind, product_code FROM matrices
+                     WHERE status = 'draft' ORDER BY key, updated_at DESC",
+                )
+                .fetch_all(&self.pool)
+                .await?
+            }
+            Revision::AsOf(ts) => {
+                sqlx::query_as(
+                    "SELECT DISTINCT ON (key) key, kind, product_code FROM matrices
+                     WHERE status = 'published' AND published_at <= $1
+                     ORDER BY key, published_at DESC",
+                )
+                .bind(ts)
+                .fetch_all(&self.pool)
+                .await?
+            }
+            Revision::LatestPublished => {
+                sqlx::query_as(
+                    "WITH pub AS (
+                       SELECT DISTINCT ON (key) key, kind, product_code, 0 AS prio
+                       FROM matrices WHERE status = 'published'
+                       ORDER BY key, published_at DESC
+                     ), drf AS (
+                       SELECT DISTINCT ON (key) key, kind, product_code, 1 AS prio
+                       FROM matrices WHERE status = 'draft'
+                       ORDER BY key, updated_at DESC
+                     )
+                     SELECT DISTINCT ON (key) key, kind, product_code FROM (
+                       SELECT * FROM pub UNION ALL SELECT * FROM drf
+                     ) t ORDER BY key, prio",
+                )
+                .fetch_all(&self.pool)
+                .await?
+            }
+        };
+        let matrices = matrix_rows
+            .into_iter()
+            .map(|(key, kind, product_code)| MatrixMeta {
+                key,
+                kind,
+                product_code,
+            })
+            .collect();
+
+        let snapshot = Snapshot {
+            fingerprint,
+            loader: Arc::new(CachedLoader::from(Arc::new(mem) as DynamicLoader)),
+            rate_sheets,
+            matrices,
+        };
         tracing::debug!(?revision, decisions = rows.len(), "built decision snapshot");
-        Ok(Arc::new(cached))
+        Ok(Arc::new(snapshot))
     }
 }
