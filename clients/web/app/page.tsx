@@ -27,6 +27,16 @@ const SECTIONS = [
     desc: "Named reusable ZEN fragments, validated on save.",
   },
   {
+    href: "/matrices",
+    title: "Matrices",
+    desc: "Row×column LLPA adjustment grids, compiled to decision tables.",
+  },
+  {
+    href: "/rate-sheets",
+    title: "Rate sheets",
+    desc: "Per-product rate × lock-term price grids.",
+  },
+  {
     href: "/publications",
     title: "Publications",
     desc: "Named point-in-time snapshots of every published artifact.",
@@ -34,19 +44,24 @@ const SECTIONS = [
 ];
 
 export default function Home() {
-  const [products, decisions, expressions, publications] = useQueries({
-    queries: [
-      { queryKey: ["products"], queryFn: endpoints.products },
-      { queryKey: ["decisions"], queryFn: () => endpoints.decisions() },
-      { queryKey: ["expressions"], queryFn: () => endpoints.expressions() },
-      { queryKey: ["publications"], queryFn: endpoints.publications },
-    ],
-  });
+  const [products, decisions, expressions, matrices, rateSheets, publications] =
+    useQueries({
+      queries: [
+        { queryKey: ["products"], queryFn: endpoints.products },
+        { queryKey: ["decisions"], queryFn: () => endpoints.decisions() },
+        { queryKey: ["expressions"], queryFn: () => endpoints.expressions() },
+        { queryKey: ["matrices"], queryFn: () => endpoints.matrices() },
+        { queryKey: ["rateSheets"], queryFn: () => endpoints.rateSheets() },
+        { queryKey: ["publications"], queryFn: endpoints.publications },
+      ],
+    });
 
   const counts: Record<string, number | undefined> = {
     "/products": products.data?.products.length,
     "/decisions": decisions.data?.decisions.length,
     "/expressions": expressions.data?.expressions.length,
+    "/matrices": matrices.data?.matrices.length,
+    "/rate-sheets": rateSheets.data?.rateSheets.length,
     "/publications": publications.data?.publications.length,
   };
 
