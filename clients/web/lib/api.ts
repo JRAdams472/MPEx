@@ -142,6 +142,49 @@ export interface EligibilityReport {
   elapsedMs: number;
 }
 
+export interface AdjustmentLine {
+  matrix: string;
+  value?: number;
+  adjustments: unknown[];
+  performance?: string;
+  trace?: unknown;
+  error?: string;
+}
+
+export interface PricingLine {
+  rate: number;
+  lockTermDays: number;
+  basePrice: number;
+  adjustmentTotal: number;
+  price: number;
+  adjustments: AdjustmentLine[];
+}
+
+export interface PricedProduct {
+  product: { code: string; name: string };
+  rateSheet: string;
+  lines: PricingLine[];
+}
+
+export interface UnpricedProduct {
+  product: { code: string; name: string };
+  reason: string;
+}
+
+export interface PricingReport {
+  revision: string;
+  priced: PricedProduct[];
+  unpriced: UnpricedProduct[];
+  elapsedMs: number;
+}
+
+export interface PricingOptions {
+  rate?: number;
+  lockTermDays?: number;
+  asOf?: string;
+  trace?: boolean;
+}
+
 export const endpoints = {
   products: () => apiGet<{ products: Product[] }>("/api/products"),
   decisions: (asOf?: string) =>
@@ -195,9 +238,19 @@ export const endpoints = {
   publication: (id: string) =>
     apiGet<Publication>(`/api/publications/${encodeURIComponent(id)}`),
   publish: (label: string) => apiPost<Publication>("/api/publications", { label }),
-  evaluateEligibility: (loan: unknown, asOf?: string) =>
+  evaluateEligibility: (loan: unknown, asOf?: string, trace?: boolean) =>
     apiPost<EligibilityReport>("/api/evaluate/eligibility", {
       loan,
       asOf,
+      trace,
+    }),
+  evaluatePricing: (loan: unknown, products: string[], opts?: PricingOptions) =>
+    apiPost<PricingReport>("/api/evaluate/pricing", {
+      loan,
+      products,
+      rate: opts?.rate,
+      lockTermDays: opts?.lockTermDays,
+      asOf: opts?.asOf,
+      trace: opts?.trace,
     }),
 };

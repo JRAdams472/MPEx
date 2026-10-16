@@ -25,3 +25,8 @@ Thumbs.db
 
 # Devin local MCP config (contains secrets)
 .devin/mcp_config.local.json
+
+# Playwright e2e
+test-results/
+playwright-report/
+blob-report/

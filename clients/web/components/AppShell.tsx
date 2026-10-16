@@ -17,6 +17,7 @@ import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import FunctionsIcon from "@mui/icons-material/Functions";
 import GridOnIcon from "@mui/icons-material/GridOn";
 import TableChartIcon from "@mui/icons-material/TableChart";
+import ScienceIcon from "@mui/icons-material/Science";
 import PublishIcon from "@mui/icons-material/Publish";
 import HistoryIcon from "@mui/icons-material/History";
 import Link from "next/link";
@@ -35,6 +36,7 @@ const NAV = [
   { href: "/matrices", label: "Matrices", icon: <GridOnIcon /> },
   { href: "/rate-sheets", label: "Rate sheets", icon: <TableChartIcon /> },
   { href: "/publications", label: "Publications", icon: <HistoryIcon /> },
+  { href: "/sandbox", label: "Sandbox", icon: <ScienceIcon /> },
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {

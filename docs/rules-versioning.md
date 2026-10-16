@@ -50,6 +50,7 @@ over it.
 | `GET /api/rate-sheets/{key}` | `{draft, published, history[]}` (`key` = product code) |
 | `PUT /api/rate-sheets/{key}` | Upsert draft (`{spec}`; spec validated) |
 | `DELETE /api/rate-sheets/{key}` | Delete draft only |
+| `POST /api/evaluate/eligibility` | `{loan, asOf?, trace?}` → per-product `eligible`/`reasons` buckets |
 | `POST /api/evaluate/pricing` | `{loan, products[], rate?, lockTermDays?, asOf?, trace?}` → per-rate lines + LLPA waterfall |
 | `GET /api/publications` | Publications with artifact counts |
 | `GET /api/publications/{id}` | Publication detail + stamped keys |
