@@ -23,6 +23,10 @@ services:
       PORT: "8080"
       RUST_LOG: info,mpex=debug,tower_http=info
       CORS_ORIGIN: http://localhost:3000
+      RUN_SEED: "1"
+      SEED_DIR: /seed
+    volumes:
+      - ./seed:/seed:ro
     ports:
       - "8080:8080"
     depends_on:
