@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: mpex
+      POSTGRES_PASSWORD: mpex
+      POSTGRES_DB: mpex
+    ports:
+      - "5432:5432"
+    volumes:
+      # postgres:18+ wants the mount at /var/lib/postgresql (PGDATA lives in ./data)
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mpex -d mpex"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgres://mpex:mpex@db:5432/mpex
+      PORT: "8080"
+      RUST_LOG: info,mpex=debug,tower_http=info
+      CORS_ORIGIN: http://localhost:3000
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: clients/web
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

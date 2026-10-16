@@ -1,0 +1,7 @@
+target
+node_modules
+.next
+.git
+.env
+clients/web/node_modules
+clients/web/.next
