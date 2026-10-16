@@ -15,6 +15,8 @@ import DashboardIcon from "@mui/icons-material/Dashboard";
 import InventoryIcon from "@mui/icons-material/Inventory2";
 import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import FunctionsIcon from "@mui/icons-material/Functions";
+import GridOnIcon from "@mui/icons-material/GridOn";
+import TableChartIcon from "@mui/icons-material/TableChart";
 import PublishIcon from "@mui/icons-material/Publish";
 import HistoryIcon from "@mui/icons-material/History";
 import Link from "next/link";
@@ -30,6 +32,8 @@ const NAV = [
   { href: "/products", label: "Products", icon: <InventoryIcon /> },
   { href: "/decisions", label: "Decisions", icon: <AccountTreeIcon /> },
   { href: "/expressions", label: "Expressions", icon: <FunctionsIcon /> },
+  { href: "/matrices", label: "Matrices", icon: <GridOnIcon /> },
+  { href: "/rate-sheets", label: "Rate sheets", icon: <TableChartIcon /> },
   { href: "/publications", label: "Publications", icon: <HistoryIcon /> },
 ];
 

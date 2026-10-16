@@ -84,10 +84,46 @@ export interface Publication {
   publishedAt: string;
   decisionCount?: number;
   expressionCount?: number;
+  matrixCount?: number;
+  rateSheetCount?: number;
   decisions?: string[];
   expressions?: string[];
   matrices?: string[];
   rateSheets?: string[];
+}
+
+export interface MatrixAxis {
+  id: string;
+  label?: string;
+  expr: string;
+}
+
+export interface MatrixSpec {
+  rows: MatrixAxis[];
+  cols: MatrixAxis[];
+  cells: Record<string, unknown>;
+  op?: string;
+}
+
+export interface RateSheetSpec {
+  rates: number[];
+  lockTerms: number[];
+  prices: Record<string, number>;
+}
+
+export interface CellMatch {
+  row: string;
+  col: string;
+  rowMatched: boolean;
+  colMatched: boolean;
+  matched: boolean;
+  value: unknown;
+}
+
+export interface SimulateResult {
+  result: unknown;
+  cells: CellMatch[];
+  performance?: string;
 }
 
 export interface EligibilityOutcome {
@@ -133,7 +169,31 @@ export const endpoints = {
       expression,
       kind,
     }),
+  matrices: (asOf?: string) =>
+    apiGet<{ matrices: ArtifactListItem[] }>(
+      `/api/matrices${asOf ? `?asOf=${encodeURIComponent(asOf)}` : ""}`,
+    ),
+  matrix: (key: string) =>
+    apiGet<ArtifactDetail>(`/api/matrices/${encodeURIComponent(key)}`),
+  saveMatrix: (key: string, body: unknown) =>
+    apiPut<ArtifactRow>(`/api/matrices/${encodeURIComponent(key)}`, body),
+  deleteMatrix: (key: string) =>
+    apiDelete(`/api/matrices/${encodeURIComponent(key)}`),
+  simulateMatrix: (spec: unknown, context: unknown) =>
+    apiPost<SimulateResult>("/api/simulate/matrix", { spec, context }),
+  rateSheets: (asOf?: string) =>
+    apiGet<{ rateSheets: ArtifactListItem[] }>(
+      `/api/rate-sheets${asOf ? `?asOf=${encodeURIComponent(asOf)}` : ""}`,
+    ),
+  rateSheet: (key: string) =>
+    apiGet<ArtifactDetail>(`/api/rate-sheets/${encodeURIComponent(key)}`),
+  saveRateSheet: (key: string, body: unknown) =>
+    apiPut<ArtifactRow>(`/api/rate-sheets/${encodeURIComponent(key)}`, body),
+  deleteRateSheet: (key: string) =>
+    apiDelete(`/api/rate-sheets/${encodeURIComponent(key)}`),
   publications: () => apiGet<{ publications: Publication[] }>("/api/publications"),
+  publication: (id: string) =>
+    apiGet<Publication>(`/api/publications/${encodeURIComponent(id)}`),
   publish: (label: string) => apiPost<Publication>("/api/publications", { label }),
   evaluateEligibility: (loan: unknown, asOf?: string) =>
     apiPost<EligibilityReport>("/api/evaluate/eligibility", {

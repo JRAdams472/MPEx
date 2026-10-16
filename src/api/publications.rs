@@ -11,10 +11,12 @@ use crate::error::AppError;
 use crate::rules::publish;
 
 pub async fn list(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
-    let rows = sqlx::query_as::<_, (Uuid, String, String, DateTime<Utc>, i64, i64)>(
+    let rows = sqlx::query_as::<_, (Uuid, String, String, DateTime<Utc>, i64, i64, i64, i64)>(
         "SELECT p.id, p.label, p.status, p.published_at,
                 (SELECT count(*) FROM decisions d WHERE d.publication_id = p.id),
-                (SELECT count(*) FROM expressions e WHERE e.publication_id = p.id)
+                (SELECT count(*) FROM expressions e WHERE e.publication_id = p.id),
+                (SELECT count(*) FROM matrices m WHERE m.publication_id = p.id),
+                (SELECT count(*) FROM rate_sheets s WHERE s.publication_id = p.id)
          FROM publications p ORDER BY p.published_at DESC",
     )
     .fetch_all(&state.pool)
@@ -22,7 +24,16 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Value>, AppError
     let publications: Vec<Value> = rows
         .into_iter()
         .map(
-            |(id, label, status, published_at, decision_count, expression_count)| {
+            |(
+                id,
+                label,
+                status,
+                published_at,
+                decision_count,
+                expression_count,
+                matrix_count,
+                rate_sheet_count,
+            )| {
                 json!({
                     "id": id,
                     "label": label,
@@ -30,6 +41,8 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Value>, AppError
                     "publishedAt": published_at,
                     "decisionCount": decision_count,
                     "expressionCount": expression_count,
+                    "matrixCount": matrix_count,
+                    "rateSheetCount": rate_sheet_count,
                 })
             },
         )
@@ -61,7 +74,19 @@ pub async fn get(
             .bind(id)
             .fetch_all(&state.pool)
             .await?;
+    let matrices: Vec<String> =
+        sqlx::query_scalar("SELECT key FROM matrices WHERE publication_id = $1 ORDER BY key")
+            .bind(id)
+            .fetch_all(&state.pool)
+            .await?;
+    let rate_sheets: Vec<String> =
+        sqlx::query_scalar("SELECT key FROM rate_sheets WHERE publication_id = $1 ORDER BY key")
+            .bind(id)
+            .fetch_all(&state.pool)
+            .await?;
 
+    // The stamped key set is also the diff vs the prior publication — publish
+    // only stamps drafts whose content changed.
     Ok(Json(json!({
         "id": id,
         "label": label,
@@ -69,6 +94,8 @@ pub async fn get(
         "publishedAt": published_at,
         "decisions": decisions,
         "expressions": expressions,
+        "matrices": matrices,
+        "rateSheets": rate_sheets,
     })))
 }
 
