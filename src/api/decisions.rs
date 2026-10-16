@@ -10,7 +10,7 @@ use zen_engine::model::DecisionContent;
 use crate::api::AppState;
 use crate::error::AppError;
 
-const KINDS: [&str; 4] = ["eligibility", "llpa", "pricing", "shared"];
+pub(crate) const KINDS: [&str; 4] = ["eligibility", "llpa", "pricing", "shared"];
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
