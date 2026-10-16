@@ -4,6 +4,7 @@ mod expressions;
 mod matrices;
 mod products;
 mod publications;
+mod rate_sheets;
 
 use axum::extract::State;
 use axum::routing::{get, post};
@@ -43,6 +44,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/health", get(health))
         .route("/api/products", get(products::list))
         .route("/api/evaluate/eligibility", post(evaluate::eligibility))
+        .route("/api/evaluate/pricing", post(evaluate::pricing))
         .route(
             "/api/validate/expression",
             post(evaluate::validate_expression),
@@ -69,6 +71,13 @@ pub fn router(state: AppState) -> Router {
                 .delete(matrices::delete),
         )
         .route("/api/simulate/matrix", post(matrices::simulate))
+        .route("/api/rate-sheets", get(rate_sheets::list))
+        .route(
+            "/api/rate-sheets/{key}",
+            get(rate_sheets::get)
+                .put(rate_sheets::put)
+                .delete(rate_sheets::delete),
+        )
         .route(
             "/api/publications",
             get(publications::list).post(publications::create),

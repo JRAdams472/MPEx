@@ -19,6 +19,7 @@ pub struct Publication {
     pub decisions: Vec<String>,
     pub expressions: Vec<String>,
     pub matrices: Vec<String>,
+    pub rate_sheets: Vec<String>,
 }
 
 /// Drafts become immutable published rows in a single transaction: insert the
@@ -116,7 +117,34 @@ pub async fn publish(pool: &PgPool, label: &str) -> Result<Publication, AppError
     .fetch_all(&mut *tx)
     .await?;
 
-    if decisions.is_empty() && expressions.is_empty() && matrices.is_empty() {
+    // Rate sheets: `spec` is the whole artifact (a data grid, not rules).
+    let rate_sheets: Vec<String> = sqlx::query_scalar(
+        "WITH latest AS (
+           SELECT DISTINCT ON (key) key, spec
+           FROM rate_sheets WHERE status = 'published'
+           ORDER BY key, published_at DESC
+         ), ins AS (
+           INSERT INTO rate_sheets
+             (key, status, published_at, publication_id, spec)
+           SELECT d.key, 'published', $1, $2, d.spec
+           FROM rate_sheets d
+           LEFT JOIN latest p ON p.key = d.key
+           WHERE d.status = 'draft'
+             AND (p.key IS NULL OR p.spec IS DISTINCT FROM d.spec)
+           RETURNING key
+         )
+         SELECT key FROM ins ORDER BY key",
+    )
+    .bind(published_at)
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    if decisions.is_empty()
+        && expressions.is_empty()
+        && matrices.is_empty()
+        && rate_sheets.is_empty()
+    {
         // Rolling back drops the publication row too — no empty snapshots.
         return Err(AppError::Conflict("no draft changes to publish".into()));
     }
@@ -127,6 +155,7 @@ pub async fn publish(pool: &PgPool, label: &str) -> Result<Publication, AppError
         decisions = decisions.len(),
         expressions = expressions.len(),
         matrices = matrices.len(),
+        rate_sheets = rate_sheets.len(),
         "published"
     );
     Ok(Publication {
@@ -137,5 +166,6 @@ pub async fn publish(pool: &PgPool, label: &str) -> Result<Publication, AppError
         decisions,
         expressions,
         matrices,
+        rate_sheets,
     })
 }
