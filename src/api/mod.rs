@@ -1,6 +1,7 @@
 mod decisions;
 mod evaluate;
 mod expressions;
+mod matrices;
 mod products;
 mod publications;
 
@@ -60,6 +61,14 @@ pub fn router(state: AppState) -> Router {
                 .put(expressions::put)
                 .delete(expressions::delete),
         )
+        .route("/api/matrices", get(matrices::list))
+        .route(
+            "/api/matrices/{key}",
+            get(matrices::get)
+                .put(matrices::put)
+                .delete(matrices::delete),
+        )
+        .route("/api/simulate/matrix", post(matrices::simulate))
         .route(
             "/api/publications",
             get(publications::list).post(publications::create),

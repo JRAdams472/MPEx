@@ -40,9 +40,40 @@ point-in-time view over it.
 | `GET /api/expressions/{key}` | `{draft, published, history[]}` |
 | `PUT /api/expressions/{key}` | Upsert draft (`{kind?, description?, expression}`; ZEN compile-checked) |
 | `DELETE /api/expressions/{key}` | Delete draft only |
+| `GET /api/matrices[?asOf=]` | Draft list, or published snapshot at `asOf` |
+| `GET /api/matrices/{key}` | `{draft, published, history[]}` |
+| `PUT /api/matrices/{key}` | Upsert draft (`{kind?, productCode?, spec}`; spec validated + compiled to JDM at write) |
+| `DELETE /api/matrices/{key}` | Delete draft only |
+| `POST /api/simulate/matrix` | `{spec, context}` → `{result, cells[]}` editor preview with per-cell match detail |
 | `GET /api/publications` | Publications with artifact counts |
 | `GET /api/publications/{id}` | Publication detail + stamped keys |
 | `POST /api/publications` | `{label}` → atomic publish → `201` or `409` |
+
+## Matrices
+
+`matrices` store a row×column adjustment spec — each row and column is a
+standard ZEN rule against the full context; a cell's scalar value applies when
+its row AND column rules match. Overlap is legal: every matching cell collects
+into `adjustments[]`, combined downstream by `op` (`sum` default | `list` |
+`min` | `max`).
+
+```jsonc
+// spec
+{
+  "rows": [{"id": "hi", "expr": "loan.ltv > 80"}],
+  "cols": [{"id": "good", "expr": "borrower.fico >= 740"}],
+  "cells": {"hi:good": 0.25},
+  "op": "sum"
+}
+```
+
+At write time the spec compiles to a decision table: one input column with no
+`field` (cells run as standard expressions), each populated cell → a rule
+`(<rowExpr>) and (<colExpr>)`, output `adjustments[]` under `first` policy
+(engine collect-column semantics — all matches gather while the output stays a
+mergeable object). An aggregate node emits `{adjustments, value, op}`. Drafts
+and published rows both carry the compiled `jdm`, so previews evaluate exactly
+what a publish ships.
 
 ## Expressions
 

@@ -55,7 +55,8 @@ Web UI: http://localhost:3000 · API: http://localhost:8080 (`/healthz`, `/api/h
 
 ## Status
 
-P1 (loan model + eligibility spine) and P2 (rules persistence & publications)
-are in. `POST /api/publications` atomically publishes changed drafts under a
-named publication; `asOf` resolves point-in-time snapshots. See
-`docs/rules-versioning.md`. See Linear team **MPE** for the phased plan.
+P1 (loan model + eligibility spine), P2 (rules persistence & publications),
+and P3 (adjustment matrices) are in. `POST /api/publications` atomically
+publishes changed drafts under a named publication; `asOf` resolves
+point-in-time snapshots; matrix specs compile to Zen decision tables.
+See `docs/rules-versioning.md`. See Linear team **MPE** for the phased plan.
