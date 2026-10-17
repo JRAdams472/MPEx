@@ -127,6 +127,8 @@ impl SnapshotStore {
             "SELECT t, max(updated_at), count(*) FROM (
                SELECT 'decisions' AS t, updated_at FROM decisions WHERE status = $1
                UNION ALL
+               SELECT 'expressions', updated_at FROM expressions WHERE status = $1
+               UNION ALL
                SELECT 'matrices', updated_at FROM matrices WHERE status = $1
                UNION ALL
                SELECT 'rate_sheets', updated_at FROM rate_sheets WHERE status = $1
@@ -148,6 +150,7 @@ impl SnapshotStore {
         fields(
             revision = ?revision,
             decisions = tracing::field::Empty,
+            expressions = tracing::field::Empty,
             rate_sheets = tracing::field::Empty,
             matrices = tracing::field::Empty
         )
@@ -310,6 +313,66 @@ impl SnapshotStore {
             })
             .collect();
 
+        // Expressions resolve with the same revision semantics and enter the
+        // loader as synthetic single-purpose decisions, so graphs call them
+        // via decisionNode: `standard` -> `{result: <value>}`; `unary` ->
+        // `{result: bool}` evaluated against the caller's `input` field.
+        let expr_rows: Vec<(String, String, String)> = match revision {
+            Revision::Draft => {
+                sqlx::query_as(
+                    "SELECT DISTINCT ON (key) key, kind, expression FROM expressions
+                     WHERE status = 'draft' ORDER BY key, updated_at DESC",
+                )
+                .fetch_all(&self.pool)
+                .await?
+            }
+            Revision::AsOf(ts) => {
+                sqlx::query_as(
+                    "SELECT DISTINCT ON (key) key, kind, expression FROM expressions
+                     WHERE status = 'published' AND published_at <= $1
+                     ORDER BY key, published_at DESC",
+                )
+                .bind(ts)
+                .fetch_all(&self.pool)
+                .await?
+            }
+            Revision::LatestPublished => {
+                sqlx::query_as(
+                    "WITH pub AS (
+                       SELECT DISTINCT ON (key) key, kind, expression, 0 AS prio
+                       FROM expressions WHERE status = 'published'
+                       ORDER BY key, published_at DESC
+                     ), drf AS (
+                       SELECT DISTINCT ON (key) key, kind, expression, 1 AS prio
+                       FROM expressions WHERE status = 'draft'
+                       ORDER BY key, updated_at DESC
+                     )
+                     SELECT DISTINCT ON (key) key, kind, expression FROM (
+                       SELECT * FROM pub UNION ALL SELECT * FROM drf
+                     ) t ORDER BY key, prio",
+                )
+                .fetch_all(&self.pool)
+                .await?
+            }
+        };
+        let mut expressions = 0usize;
+        for (key, kind, expression) in &expr_rows {
+            if mem.get(key.as_str()).is_some() {
+                // A decision/matrix already claimed the key — namespaced keys
+                // (expr.*) make this unusual, so warn rather than silently win.
+                tracing::warn!(
+                    key,
+                    "expression key collides with a decision/matrix; skipped"
+                );
+                continue;
+            }
+            let content: DecisionContent =
+                serde_json::from_value(expression_jdm(key, kind, expression))
+                    .with_context(|| format!("expression {key}: wrapper JDM invalid"))?;
+            mem.add(key.clone(), content);
+            expressions += 1;
+        }
+
         let snapshot = Snapshot {
             fingerprint,
             loader: Arc::new(CachedLoader::from(Arc::new(mem) as DynamicLoader)),
@@ -318,9 +381,54 @@ impl SnapshotStore {
         };
         tracing::Span::current()
             .record("decisions", rows.len())
+            .record("expressions", expressions)
             .record("rate_sheets", snapshot.rate_sheets.len())
             .record("matrices", snapshot.matrices.len());
-        tracing::debug!(?revision, decisions = rows.len(), "built decision snapshot");
+        tracing::debug!(
+            ?revision,
+            decisions = rows.len(),
+            expressions,
+            "built decision snapshot"
+        );
         Ok(Arc::new(snapshot))
     }
+}
+
+/// Wraps a stored expression in a single-purpose decision so graphs reach it
+/// through `decisionNode` on its key. `standard` emits `{result: <value>}`;
+/// `unary` (e.g. `> 80`) can't run as a standard expression, so it's wrapped
+/// in a one-rule table that predicates the caller's `input` field and emits
+/// `{result: bool}` (wildcard rule defaults to false).
+fn expression_jdm(key: &str, kind: &str, expression: &str) -> serde_json::Value {
+    let middle = match kind {
+        "unary" => serde_json::json!({
+            "id": "tbl", "type": "decisionTableNode", "name": key,
+            "content": {
+                "hitPolicy": "first",
+                "inputs": [{"id": "i1", "name": "input", "field": "input"}],
+                "outputs": [{"id": "o1", "name": "result", "field": "result"}],
+                "rules": [
+                    {"_id": "r1", "i1": expression, "o1": "true"},
+                    {"_id": "r2", "i1": "", "o1": "false"}
+                ]
+            }
+        }),
+        _ => serde_json::json!({
+            "id": "expr", "type": "expressionNode", "name": key,
+            "content": {"expressions": [
+                {"id": "e1", "key": "result", "value": expression}
+            ]}
+        }),
+    };
+    serde_json::json!({
+        "nodes": [
+            {"id": "in", "type": "inputNode", "name": "Request"},
+            middle,
+            {"id": "out", "type": "outputNode", "name": "Response"}
+        ],
+        "edges": [
+            {"id": "e1", "sourceId": "in", "targetId": middle["id"]},
+            {"id": "e2", "sourceId": middle["id"], "targetId": "out"}
+        ]
+    })
 }
