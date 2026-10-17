@@ -119,8 +119,26 @@ stale entries never serve.
 
 `expressions` are named reusable ZEN fragments (`kind`: `standard` | `unary`),
 versioned exactly like decisions. They're validated at save time
-(`zen_expression::compile_{,unary_}expression`) and consumed by rule editors /
-matrix compilers — they're not loaded into the eval snapshot yet.
+(`zen_expression::compile_{,unary_}expression`) and resolve into the eval
+snapshot alongside decisions — each expression is wrapped in a synthetic
+single-purpose decision, so rule graphs call it via `decisionNode` on its key:
+
+- `standard` (e.g. `borrower.fico >= 740 ? 'prime' : 'near-prime'`) evaluates
+  against the full context and emits `{result: <value>}`.
+- `unary` (e.g. `<= 80`) is wrapped in a one-rule decision table that
+  predicates the caller's `input` field and emits `{result: bool}` — set
+  `input` upstream (e.g. an expressionNode `input = loan.ltv`) before the
+  decisionNode call.
+
+The sub-decision's `{result}` merges into the passing context, so the next
+node reads `result` directly. Keep `expr.*` key namespacing — a collision
+with a decision/matrix key skips the expression (logged warn). Snapshot
+fingerprints cover `expressions`, so republishing one invalidates cached
+snapshots and pricing memos like any other artifact.
+
+Matrix axis expressions can't call `decisionNode` — they're plain ZEN
+compiled at save time — so matrices don't reference named expressions
+directly; wrap the matrix in a decision graph that evaluates them.
 
 ## Evaluation revisions (unchanged)
 
