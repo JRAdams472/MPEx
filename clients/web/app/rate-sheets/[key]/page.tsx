@@ -21,7 +21,7 @@ import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
-import { endpoints, type RateSheetSpec } from "@/lib/api";
+import { endpoints, mutationError, type RateSheetSpec } from "@/lib/api";
 import {
   nextUid,
   rateSheetDraftToSpec,
@@ -145,13 +145,7 @@ export default function RateSheetDetailPage() {
     },
   });
   const saveError =
-    specErrors.length > 0
-      ? specErrors.join("; ")
-      : save.data && save.data.status >= 400
-        ? ((save.data.data as { error?: string }).error ?? `HTTP ${save.data.status}`)
-        : save.isError
-          ? `${save.error}`
-          : null;
+    specErrors.length > 0 ? specErrors.join("; ") : mutationError(save);
 
   const remove = useMutation({
     mutationFn: () => endpoints.deleteRateSheet(key),

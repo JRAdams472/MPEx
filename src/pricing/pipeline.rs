@@ -130,100 +130,12 @@ pub async fn evaluate_pricing(
         .and_then(Value::as_u64)
         .map(|v| v as u32);
 
-    struct Job {
-        product: ProductRef,
-        sheet_key: String,
-        sheet: RateSheetSpec,
-        matrix_keys: Vec<String>,
-        term: u32,
-        rates: Vec<f64>,
-    }
-
     let mut jobs = Vec::new();
     for (code, name) in known {
-        let product = ProductRef {
-            code: code.clone(),
-            name,
-        };
-        let Some(spec_json) = snapshot.rate_sheets.get(&code) else {
-            unpriced.push(UnpricedProduct {
-                product,
-                reason: "no rate sheet".into(),
-            });
-            continue;
-        };
-        let sheet = match RateSheetSpec::parse(spec_json) {
-            Ok(s) => s,
-            Err(e) => {
-                unpriced.push(UnpricedProduct {
-                    product,
-                    reason: format!("invalid rate sheet: {e}"),
-                });
-                continue;
-            }
-        };
-        let term = params
-            .lock_term_days
-            .or(loan_term)
-            .or_else(|| sheet.lock_terms.iter().min().copied());
-        let Some(term) = term else {
-            unpriced.push(UnpricedProduct {
-                product,
-                reason: "no lock term available".into(),
-            });
-            continue;
-        };
-        if !sheet.lock_terms.contains(&term) {
-            unpriced.push(UnpricedProduct {
-                product,
-                reason: format!("lock term {term} not offered"),
-            });
-            continue;
+        let product = ProductRef { code, name };
+        if let Some(job) = build_job(product, snapshot, params, loan_term, &mut unpriced) {
+            jobs.push(job);
         }
-        let rates: Vec<f64> = match params.rate {
-            Some(r) => {
-                if !sheet.rates.contains(&r) {
-                    unpriced.push(UnpricedProduct {
-                        product,
-                        reason: format!("rate {r} not on sheet"),
-                    });
-                    continue;
-                }
-                vec![r]
-            }
-            // Per-rate lines: every listed rate with a price at this term.
-            None => sheet
-                .rates
-                .iter()
-                .copied()
-                .filter(|r| sheet.price(*r, term).is_some())
-                .collect(),
-        };
-        if rates.is_empty() {
-            unpriced.push(UnpricedProduct {
-                product,
-                reason: format!("no prices at lock term {term}"),
-            });
-            continue;
-        }
-        let matrix_keys = snapshot
-            .matrices
-            .iter()
-            .filter(|m| {
-                m.kind == "llpa"
-                    && (m.product_code.is_none()
-                        || m.product_code.as_deref() == Some(code.as_str()))
-            })
-            .map(|m| m.key.clone())
-            .collect();
-        jobs.push(Job {
-            product,
-            sheet_key: code,
-            sheet,
-            matrix_keys,
-            term,
-            rates,
-        });
     }
 
     let opts = EvaluationSerializedOptions {
@@ -243,93 +155,7 @@ pub async fn evaluate_pricing(
             // Span is Send+Sync — the child span is created and entered inside
             // the blocking task so the eval stays under the request trace.
             let parent = tracing::Span::current();
-            tokio::task::spawn_blocking(move || {
-                let span = tracing::info_span!(
-                    parent: &parent,
-                    "eval.product",
-                    product = %job.product.code,
-                    rates = job.rates.len(),
-                    matrices = job.matrix_keys.len()
-                );
-                let _g = span.enter();
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("eval runtime");
-                let mut lines = Vec::new();
-                for rate in &job.rates {
-                    // Inject the line's pricing inputs so matrix expressions
-                    // can key on them: loan.rate, loan.scenario.lockTermDays.
-                    let mut ctx = loan.clone();
-                    ctx["loan"]["rate"] = json!(rate);
-                    ctx["scenario"]["lockTermDays"] = json!(job.term);
-                    let mut adjustments = Vec::new();
-                    let mut total = 0.0;
-                    for key in &job.matrix_keys {
-                        let mspan = tracing::info_span!(
-                            "eval.matrix",
-                            product = %job.product.code,
-                            matrix = %key,
-                            rate,
-                            ok = tracing::field::Empty,
-                            value = tracing::field::Empty
-                        );
-                        let _mg = mspan.enter();
-                        match rt.block_on(engine.evaluate_serialized(key, ctx.clone().into(), opts))
-                        {
-                            Ok(out) => {
-                                let result = &out["result"];
-                                let value = result.get("value").and_then(Value::as_f64);
-                                mspan.record("ok", true);
-                                if let Some(v) = value {
-                                    mspan.record("value", v);
-                                    total += v;
-                                }
-                                adjustments.push(AdjustmentLine {
-                                    matrix: key.clone(),
-                                    value,
-                                    adjustments: result
-                                        .get("adjustments")
-                                        .and_then(Value::as_array)
-                                        .cloned()
-                                        .unwrap_or_default(),
-                                    performance: out
-                                        .get("performance")
-                                        .and_then(Value::as_str)
-                                        .map(str::to_string),
-                                    trace: out.get("trace").cloned(),
-                                    error: None,
-                                });
-                            }
-                            Err(e) => {
-                                mspan.record("ok", false);
-                                adjustments.push(AdjustmentLine {
-                                    matrix: key.clone(),
-                                    value: None,
-                                    adjustments: vec![],
-                                    performance: None,
-                                    trace: None,
-                                    error: Some(e.to_string()),
-                                });
-                            }
-                        }
-                    }
-                    let base = job.sheet.price(*rate, job.term).unwrap_or(0.0);
-                    lines.push(PricingLine {
-                        rate: *rate,
-                        lock_term_days: job.term,
-                        base_price: base,
-                        adjustment_total: total,
-                        price: base + total,
-                        adjustments,
-                    });
-                }
-                PricedProduct {
-                    product: job.product,
-                    rate_sheet: job.sheet_key,
-                    lines,
-                }
-            })
+            tokio::task::spawn_blocking(move || price_product(job, engine, loan, opts, parent))
         })
         .collect();
 
@@ -363,4 +189,202 @@ pub async fn evaluate_pricing(
         unpriced,
         elapsed_ms,
     })
+}
+
+/// One product's resolved pricing inputs.
+struct Job {
+    product: ProductRef,
+    sheet_key: String,
+    sheet: RateSheetSpec,
+    matrix_keys: Vec<String>,
+    term: u32,
+    rates: Vec<f64>,
+}
+
+/// Resolves and validates one product's pricing inputs. On failure pushes the
+/// reason to `unpriced` and returns None.
+fn build_job(
+    product: ProductRef,
+    snapshot: &Snapshot,
+    params: &PricingParams<'_>,
+    loan_term: Option<u32>,
+    unpriced: &mut Vec<UnpricedProduct>,
+) -> Option<Job> {
+    let code = product.code.clone();
+    let reject = |product: ProductRef, reason: String, unpriced: &mut Vec<UnpricedProduct>| {
+        unpriced.push(UnpricedProduct { product, reason });
+        None
+    };
+    let Some(spec_json) = snapshot.rate_sheets.get(&code) else {
+        return reject(product, "no rate sheet".into(), unpriced);
+    };
+    let sheet = match RateSheetSpec::parse(spec_json) {
+        Ok(s) => s,
+        Err(e) => return reject(product, format!("invalid rate sheet: {e}"), unpriced),
+    };
+    let term = params
+        .lock_term_days
+        .or(loan_term)
+        .or_else(|| sheet.lock_terms.iter().min().copied());
+    let Some(term) = term else {
+        return reject(product, "no lock term available".into(), unpriced);
+    };
+    if !sheet.lock_terms.contains(&term) {
+        return reject(product, format!("lock term {term} not offered"), unpriced);
+    }
+    let rates: Vec<f64> = match params.rate {
+        Some(r) => {
+            if !sheet.rates.contains(&r) {
+                return reject(product, format!("rate {r} not on sheet"), unpriced);
+            }
+            vec![r]
+        }
+        // Per-rate lines: every listed rate with a price at this term.
+        None => sheet
+            .rates
+            .iter()
+            .copied()
+            .filter(|r| sheet.price(*r, term).is_some())
+            .collect(),
+    };
+    if rates.is_empty() {
+        return reject(product, format!("no prices at lock term {term}"), unpriced);
+    }
+    let matrix_keys = snapshot
+        .matrices
+        .iter()
+        .filter(|m| {
+            m.kind == "llpa"
+                && (m.product_code.is_none() || m.product_code.as_deref() == Some(code.as_str()))
+        })
+        .map(|m| m.key.clone())
+        .collect();
+    Some(Job {
+        product,
+        sheet_key: code,
+        sheet,
+        matrix_keys,
+        term,
+        rates,
+    })
+}
+
+/// Prices one product across its resolved rates. Runs on a spawn_blocking
+/// current-thread runtime (zen `Variable` is `Rc`-based/`!Send`) — no DB I/O.
+fn price_product(
+    job: Job,
+    engine: DecisionEngine,
+    loan: Value,
+    opts: EvaluationSerializedOptions,
+    parent: tracing::Span,
+) -> PricedProduct {
+    let span = tracing::info_span!(
+        parent: &parent,
+        "eval.product",
+        product = %job.product.code,
+        rates = job.rates.len(),
+        matrices = job.matrix_keys.len()
+    );
+    let _g = span.enter();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("eval runtime");
+    let mut lines = Vec::new();
+    for rate in &job.rates {
+        // Inject the line's pricing inputs so matrix expressions
+        // can key on them: loan.rate, loan.scenario.lockTermDays.
+        let mut ctx = loan.clone();
+        ctx["loan"]["rate"] = json!(rate);
+        ctx["scenario"]["lockTermDays"] = json!(job.term);
+        let mut adjustments = Vec::new();
+        let mut total = 0.0;
+        for key in &job.matrix_keys {
+            let line = eval_matrix(
+                &rt,
+                &engine,
+                key,
+                ctx.clone(),
+                opts,
+                &job.product.code,
+                *rate,
+            );
+            if let Some(v) = line.value {
+                total += v;
+            }
+            adjustments.push(line);
+        }
+        let base = job.sheet.price(*rate, job.term).unwrap_or(0.0);
+        lines.push(PricingLine {
+            rate: *rate,
+            lock_term_days: job.term,
+            base_price: base,
+            adjustment_total: total,
+            price: base + total,
+            adjustments,
+        });
+    }
+    PricedProduct {
+        product: job.product,
+        rate_sheet: job.sheet_key,
+        lines,
+    }
+}
+
+/// Evaluates one LLPA matrix and folds the outcome into an `AdjustmentLine`.
+/// A failed matrix records its error and contributes no value to the price.
+fn eval_matrix(
+    rt: &tokio::runtime::Runtime,
+    engine: &DecisionEngine,
+    key: &str,
+    ctx: Value,
+    opts: EvaluationSerializedOptions,
+    product_code: &str,
+    rate: f64,
+) -> AdjustmentLine {
+    let mspan = tracing::info_span!(
+        "eval.matrix",
+        product = %product_code,
+        matrix = %key,
+        rate,
+        ok = tracing::field::Empty,
+        value = tracing::field::Empty
+    );
+    let _mg = mspan.enter();
+    match rt.block_on(engine.evaluate_serialized(key, ctx.into(), opts)) {
+        Ok(out) => {
+            let result = &out["result"];
+            let value = result.get("value").and_then(Value::as_f64);
+            mspan.record("ok", true);
+            if let Some(v) = value {
+                mspan.record("value", v);
+            }
+            AdjustmentLine {
+                matrix: key.to_string(),
+                value,
+                adjustments: result
+                    .get("adjustments")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
+                performance: out
+                    .get("performance")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                trace: out.get("trace").cloned(),
+                error: None,
+            }
+        }
+        Err(e) => {
+            mspan.record("ok", false);
+            AdjustmentLine {
+                matrix: key.to_string(),
+                value: None,
+                adjustments: vec![],
+                performance: None,
+                trace: None,
+                error: Some(e.to_string()),
+            }
+        }
+    }
 }

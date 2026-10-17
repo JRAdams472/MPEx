@@ -15,6 +15,7 @@ import { useState } from "react";
 
 import {
   endpoints,
+  mutationError,
   type EligibilityOutcome,
   type EligibilityReport,
 } from "@/lib/api";
@@ -60,12 +61,7 @@ export default function DecisionDetailPage() {
       await queryClient.invalidateQueries({ queryKey: ["decisions"] });
     },
   });
-  const saveError =
-    save.data && save.data.status >= 400
-      ? ((save.data.data as { error?: string }).error ?? `HTTP ${save.data.status}`)
-      : save.isError
-        ? `${save.error}`
-        : null;
+  const saveError = mutationError(save);
 
   const remove = useMutation({
     mutationFn: () => endpoints.deleteDecision(key),
