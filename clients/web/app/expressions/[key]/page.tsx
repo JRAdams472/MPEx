@@ -15,7 +15,7 @@ import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
-import { endpoints } from "@/lib/api";
+import { endpoints, mutationError } from "@/lib/api";
 import StatusChip from "@/components/StatusChip";
 
 const KINDS = ["standard", "unary"];
@@ -88,12 +88,7 @@ export default function ExpressionDetailPage() {
       await queryClient.invalidateQueries({ queryKey: ["expressions"] });
     },
   });
-  const saveError =
-    save.data && save.data.status >= 400
-      ? ((save.data.data as { error?: string }).error ?? `HTTP ${save.data.status}`)
-      : save.isError
-        ? `${save.error}`
-        : null;
+  const saveError = mutationError(save);
 
   const remove = useMutation({
     mutationFn: () => endpoints.deleteExpression(key),

@@ -36,28 +36,12 @@ impl RateSheetSpec {
     }
 
     fn validate(&self) -> Result<(), String> {
-        if self.rates.is_empty() {
-            return Err("rates must be non-empty".into());
-        }
-        if self.lock_terms.is_empty() {
-            return Err("lockTerms must be non-empty".into());
-        }
-        for r in &self.rates {
-            if !r.is_finite() || *r <= 0.0 {
-                return Err(format!("rate must be positive and finite: {r}"));
-            }
-        }
-        for t in &self.lock_terms {
-            if *t == 0 {
-                return Err("lockTerms must be positive".into());
-            }
-        }
-        if has_dup(self.rates.iter().map(|r| rate_key(*r))) {
-            return Err("duplicate rate in rates".into());
-        }
-        if has_dup(self.lock_terms.iter().copied()) {
-            return Err("duplicate term in lockTerms".into());
-        }
+        validate_lists(&self.rates, &self.lock_terms)?;
+        validate_uniques(&self.rates, &self.lock_terms)?;
+        self.validate_prices()
+    }
+
+    fn validate_prices(&self) -> Result<(), String> {
         for (k, v) in &self.prices {
             let (rate, term) = split_price_key(k)?;
             if !self.rates.iter().any(|r| rate_key(*r) == rate) {
@@ -102,6 +86,38 @@ impl RateSheetSpec {
 
 /// Rates serialize in keys like "6.5" — normalize via ryu-style shortest
 /// round-trip so 6.50 and 6.5 collide as intended.
+/// Non-empty checks plus per-element value constraints, in the original order:
+/// rates empty, lockTerms empty, rate values, term values.
+fn validate_lists(rates: &[f64], lock_terms: &[u32]) -> Result<(), String> {
+    if rates.is_empty() {
+        return Err("rates must be non-empty".into());
+    }
+    if lock_terms.is_empty() {
+        return Err("lockTerms must be non-empty".into());
+    }
+    for r in rates {
+        if !r.is_finite() || *r <= 0.0 {
+            return Err(format!("rate must be positive and finite: {r}"));
+        }
+    }
+    for t in lock_terms {
+        if *t == 0 {
+            return Err("lockTerms must be positive".into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_uniques(rates: &[f64], lock_terms: &[u32]) -> Result<(), String> {
+    if has_dup(rates.iter().map(|r| rate_key(*r))) {
+        return Err("duplicate rate in rates".into());
+    }
+    if has_dup(lock_terms.iter().copied()) {
+        return Err("duplicate term in lockTerms".into());
+    }
+    Ok(())
+}
+
 fn rate_key(rate: f64) -> String {
     let s = format!("{rate}");
     s

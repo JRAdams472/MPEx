@@ -28,6 +28,22 @@ export const apiPut = <T>(path: string, body: unknown) =>
   apiWrite<T>("PUT", path, body);
 export const apiDelete = (path: string) => apiWrite("DELETE", path);
 
+const asOfQuery = (asOf?: string) =>
+  asOf ? `?asOf=${encodeURIComponent(asOf)}` : "";
+
+/** Error message from an apiWrite-backed mutation result, or null when clean. */
+export function mutationError(m: {
+  data?: { status: number; data: unknown };
+  isError: boolean;
+  error: unknown;
+}): string | null {
+  if (m.data && m.data.status >= 400) {
+    const data = m.data.data as { error?: string };
+    return data.error ?? `HTTP ${m.data.status}`;
+  }
+  return m.isError ? `${m.error}` : null;
+}
+
 export interface Product {
   code: string;
   name: string;
@@ -189,7 +205,7 @@ export const endpoints = {
   products: () => apiGet<{ products: Product[] }>("/api/products"),
   decisions: (asOf?: string) =>
     apiGet<{ decisions: ArtifactListItem[] }>(
-      `/api/decisions${asOf ? `?asOf=${encodeURIComponent(asOf)}` : ""}`,
+      `/api/decisions${asOfQuery(asOf)}`,
     ),
   decision: (key: string) =>
     apiGet<ArtifactDetail>(`/api/decisions/${encodeURIComponent(key)}`),
@@ -199,7 +215,7 @@ export const endpoints = {
     apiDelete(`/api/decisions/${encodeURIComponent(key)}`),
   expressions: (asOf?: string) =>
     apiGet<{ expressions: ArtifactListItem[] }>(
-      `/api/expressions${asOf ? `?asOf=${encodeURIComponent(asOf)}` : ""}`,
+      `/api/expressions${asOfQuery(asOf)}`,
     ),
   expression: (key: string) =>
     apiGet<ArtifactDetail>(`/api/expressions/${encodeURIComponent(key)}`),
@@ -214,7 +230,7 @@ export const endpoints = {
     }),
   matrices: (asOf?: string) =>
     apiGet<{ matrices: ArtifactListItem[] }>(
-      `/api/matrices${asOf ? `?asOf=${encodeURIComponent(asOf)}` : ""}`,
+      `/api/matrices${asOfQuery(asOf)}`,
     ),
   matrix: (key: string) =>
     apiGet<ArtifactDetail>(`/api/matrices/${encodeURIComponent(key)}`),
@@ -226,7 +242,7 @@ export const endpoints = {
     apiPost<SimulateResult>("/api/simulate/matrix", { spec, context }),
   rateSheets: (asOf?: string) =>
     apiGet<{ rateSheets: ArtifactListItem[] }>(
-      `/api/rate-sheets${asOf ? `?asOf=${encodeURIComponent(asOf)}` : ""}`,
+      `/api/rate-sheets${asOfQuery(asOf)}`,
     ),
   rateSheet: (key: string) =>
     apiGet<ArtifactDetail>(`/api/rate-sheets/${encodeURIComponent(key)}`),

@@ -23,7 +23,13 @@ import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
-import { endpoints, type MatrixSpec, type SimulateResult } from "@/lib/api";
+import {
+  endpoints,
+  mutationError,
+  type CellMatch,
+  type MatrixSpec,
+  type SimulateResult,
+} from "@/lib/api";
 import {
   MATRIX_OPS,
   cellKey,
@@ -99,12 +105,7 @@ export default function MatrixDetailPage() {
       await queryClient.invalidateQueries({ queryKey: ["matrices"] });
     },
   });
-  const saveError =
-    save.data && save.data.status >= 400
-      ? ((save.data.data as { error?: string }).error ?? `HTTP ${save.data.status}`)
-      : save.isError
-        ? `${save.error}`
-        : null;
+  const saveError = mutationError(save);
 
   const remove = useMutation({
     mutationFn: () => endpoints.deleteMatrix(key),
@@ -343,13 +344,7 @@ export default function MatrixDetailPage() {
                       key={c.id}
                       align="center"
                       sx={{
-                        bgcolor: matched
-                          ? matched.matched
-                            ? "success.dark"
-                            : matched.rowMatched || matched.colMatched
-                              ? "warning.dark"
-                              : undefined
-                          : undefined,
+                        bgcolor: matchCellColor(matched),
                         opacity: matched && !matched.matched ? 0.5 : 1,
                       }}
                     >
@@ -465,13 +460,20 @@ export default function MatrixDetailPage() {
   );
 }
 
+function matchCellColor(cell?: CellMatch): string | undefined {
+  if (!cell) return undefined;
+  if (cell.matched) return "success.dark";
+  if (cell.rowMatched || cell.colMatched) return "warning.dark";
+  return undefined;
+}
+
 function AxisTable({
   axes,
   setAxes,
   isRow,
   remove,
   set,
-}: {
+}: Readonly<{
   axes: AxisDraft[];
   setAxes: (v: AxisDraft[]) => void;
   isRow: boolean;
@@ -487,7 +489,7 @@ function AxisTable({
     i: number,
     patch: Partial<AxisDraft>,
   ) => void;
-}) {
+}>) {
   return (
     <TableContainer component={Paper} variant="outlined">
       <Table size="small">
