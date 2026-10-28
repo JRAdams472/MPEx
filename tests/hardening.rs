@@ -18,10 +18,11 @@ use tower::ServiceExt;
 use mpex::api::{self, AppState};
 use mpex::rules::snapshot::SnapshotStore;
 
-/// Serializes each test's cleanup → draft PUTs → publish section. Publishing
-/// is global (stamps every changed draft), so interleaved PUT/publish pairs
-/// would race: one test's publish could stamp the other's fresh drafts and
-/// leave it with a 409.
+/// Serializes each test's full body: cleanup → draft PUTs → publish → eval
+/// calls. Publishing is global (stamps every changed draft) and the snapshot
+/// fingerprint covers ALL artifact tables, so one test's DELETEs mid-run
+/// would invalidate the other's memoized fingerprint and break the
+/// byte-identical repeat assertion — the tests can't safely overlap.
 static SEED_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Per-test fixture namespaces — the two tests run on parallel threads, so
@@ -202,11 +203,9 @@ async fn determinism_and_memoization() {
     };
     let pool = PgPool::connect(&url).await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    let app = {
-        let _guard = SEED_LOCK.lock().await;
-        cleanup(&pool, &DET).await;
-        seed(&pool, &DET).await
-    };
+    let _guard = SEED_LOCK.lock().await;
+    cleanup(&pool, &DET).await;
+    let app = seed(&pool, &DET).await;
 
     let req = pricing_request(&DET);
     let (s1, b1) = call(&app, "POST", "/api/evaluate/pricing", Some(req.clone())).await;
@@ -245,11 +244,9 @@ async fn concurrent_evals_are_consistent() {
     };
     let pool = PgPool::connect(&url).await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    let app = {
-        let _guard = SEED_LOCK.lock().await;
-        cleanup(&pool, &CON).await;
-        seed(&pool, &CON).await
-    };
+    let _guard = SEED_LOCK.lock().await;
+    cleanup(&pool, &CON).await;
+    let app = seed(&pool, &CON).await;
 
     // One warm request to settle the snapshot cache, then a burst.
     call(
