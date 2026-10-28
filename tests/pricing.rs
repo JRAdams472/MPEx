@@ -196,6 +196,7 @@ async fn pricing_lifecycle() {
     let app = api::router(AppState {
         pool: pool.clone(),
         snapshots: Arc::new(SnapshotStore::new(pool.clone())),
+        auth: None,
     });
 
     // --- Rate sheet CRUD + validation ---------------------------------------

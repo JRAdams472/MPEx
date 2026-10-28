@@ -48,6 +48,7 @@ fn make_app(pool: &PgPool) -> Router {
     api::router(AppState {
         pool: pool.clone(),
         snapshots: Arc::new(SnapshotStore::new(pool.clone())),
+        auth: None,
     })
 }
 

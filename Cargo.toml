@@ -24,6 +24,13 @@ opentelemetry_sdk = { version = "0.33", features = [
     "logs",
     "experimental_logs_batch_log_processor_with_async_runtime",
 ] }
+# aws_lc_rs backend: already in the tree via reqwest/rustls — keeps the JWT
+# crypto provider unambiguous and adds no new native deps.
+jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", features = [
@@ -45,5 +52,5 @@ zen-engine = "2"
 zen-expression = "2"
 
 [dev-dependencies]
-reqwest = { version = "0.12", features = ["json"] }
+base64 = "0.22"
 tower = { version = "0.5", features = ["util"] }

@@ -1,3 +1,4 @@
+mod auth;
 mod decisions;
 mod evaluate;
 mod expressions;
@@ -36,6 +37,10 @@ fn parse_admin_as_of(
 pub struct AppState {
     pub pool: PgPool,
     pub snapshots: Arc<SnapshotStore>,
+    /// OIDC context — `None` keeps the API runnable without an IdP;
+    /// auth extractors then reject with an error (enforcement lands in
+    /// MPE-99 alongside per-route role gates).
+    pub auth: Option<Arc<crate::auth::AuthContext>>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -43,6 +48,7 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/api/health", get(health))
         .route("/api/products", get(products::list))
+        .route("/api/auth/whoami", get(auth::whoami))
         .route("/api/evaluate/eligibility", post(evaluate::eligibility))
         .route("/api/evaluate/pricing", post(evaluate::pricing))
         .route(

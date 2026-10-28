@@ -164,6 +164,7 @@ async fn expressions_resolve_into_eval_snapshot() {
     let app = api::router(AppState {
         pool: pool.clone(),
         snapshots: Arc::new(SnapshotStore::new(pool.clone())),
+        auth: None,
     });
 
     // standard expression: fico band string

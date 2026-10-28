@@ -25,6 +25,12 @@ services:
       CORS_ORIGIN: http://localhost:3000
       RUN_SEED: "1"
       SEED_DIR: /seed
+      # OIDC resource-server config. Tokens carry iss=http://localhost:5556/dex
+      # (what the browser sees); JWKS is fetched over the docker network.
+      OIDC_ISSUER: http://localhost:5556/dex
+      # Dex stamps aud=client_id: mpex-web (UI sessions), mpex-svc (service).
+      OIDC_AUDIENCE: mpex-api,mpex-web,mpex-svc
+      OIDC_JWKS_URL: http://dex:5556/dex/keys
       # Observability exporters (both optional; unset = stdout JSON only).
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
       SEQ_URL: http://seq/ingest/otlp/v1/logs
@@ -36,6 +42,21 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      dex:
+        condition: service_started
+
+  dex:
+    # Dev IdP — auth-code+PKCE for the admin UI, client-credentials for
+    # service accounts. Requires v2.46.0+ for the clientCredentialsEnabled flag.
+    image: dexidp/dex:v2.46.0
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    environment:
+      DEX_MPEX_SVC_SECRET: ${DEX_MPEX_SVC_SECRET:-mpex-svc-dev-secret}
+      DEX_CLIENT_CREDENTIAL_GRANT_ENABLED_BY_DEFAULT: "true"
+    volumes:
+      - ./dex/config.dev.yaml:/etc/dex/config.yaml:ro
+    ports:
+      - "5556:5556"
 
   web:
     build: clients/web
