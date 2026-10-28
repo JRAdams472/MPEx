@@ -210,6 +210,7 @@ async fn matrix_publish_lifecycle() {
     let app = api::router(AppState {
         pool: pool.clone(),
         snapshots: snapshots.clone(),
+        auth: None,
     });
 
     // --- Draft CRUD + simulate ----------------------------------------------

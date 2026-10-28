@@ -136,6 +136,7 @@ async fn publish_lifecycle() {
     let app = api::router(AppState {
         pool: pool.clone(),
         snapshots: Arc::new(SnapshotStore::new(pool.clone())),
+        auth: None,
     });
 
     // --- Decision CRUD ------------------------------------------------------

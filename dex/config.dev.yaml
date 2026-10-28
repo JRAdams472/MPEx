@@ -1,0 +1,47 @@
+# Dev-only OIDC issuer for MPEx. Serves the admin UI's auth-code+PKCE flow
+# and the service client's client-credentials grant (v2.46.0+ flag below).
+# Production just repoints OIDC_ISSUER at the real IdP (LOLA OpenIddict / corporate).
+issuer: http://localhost:5556/dex
+
+storage:
+  type: memory
+
+web:
+  http: 0.0.0.0:5556
+
+oauth2:
+  skipApprovalScreen: true
+  # client_credentials isn't in dex's default grant set — list it for the
+  # service account. Also gated by clientCredentialsEnabled / the
+  # DEX_CLIENT_CREDENTIAL_GRANT_ENABLED_BY_DEFAULT env var (dex >= v2.46.0).
+  grantTypes: ["authorization_code", "refresh_token", "client_credentials"]
+  clientCredentialsEnabled: true
+
+logger:
+  level: info
+  format: json
+
+enablePasswordDB: true
+staticPasswords:
+  - email: "admin@mpex.dev"
+    hash: "$2b$10$hyoS/9Z5kQLVAxRhDcjXEe96eqtyFYgG/dLT3kuPJPx2.TehXHA7q"
+    username: "admin"
+    userID: "admin-user"
+  - email: "pricer@mpex.dev"
+    hash: "$2b$10$yJ0djJaKfmrEddOrXPM1N.hvqkYO0VzXqitT7a2y6ZyOdmNwRM5oS"
+    username: "pricer"
+    userID: "pricer-user"
+  - email: "viewer@mpex.dev"
+    hash: "$2b$10$QzV6AHLvS8k2LGYTQ9oJfOhrw5DkIcGcWcCzZF7X0DShkeRj5.s.m"
+    username: "viewer"
+    userID: "viewer-user"
+
+staticClients:
+  - id: mpex-web
+    name: "MPEx Admin UI"
+    public: true
+    redirectURIs:
+      - http://localhost:3000/auth/callback
+  - id: mpex-svc
+    name: "MPEx service account"
+    secretEnv: DEX_MPEX_SVC_SECRET

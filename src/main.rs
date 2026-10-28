@@ -23,6 +23,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let snapshots = Arc::new(SnapshotStore::new(pool.clone()));
+    let auth = mpex::auth::init(&cfg, pool.clone())
+        .await
+        .context("auth init")?;
 
     let cors = CorsLayer::new()
         .allow_origin(
@@ -33,14 +36,18 @@ async fn main() -> anyhow::Result<()> {
         .allow_methods(tower_http::cors::Any)
         .allow_headers(tower_http::cors::Any);
 
-    let app =
-        api::router(api::AppState { pool, snapshots })
-            // INFO so request spans survive the EnvFilter and reach the OTLP
-            // trace exporter (the DefaultMakeSpan default is DEBUG).
-            .layer(TraceLayer::new_for_http().make_span_with(
-                tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO),
-            ))
-            .layer(cors);
+    let app = api::router(api::AppState {
+        pool,
+        snapshots,
+        auth,
+    })
+    // INFO so request spans survive the EnvFilter and reach the OTLP
+    // trace exporter (the DefaultMakeSpan default is DEBUG).
+    .layer(
+        TraceLayer::new_for_http()
+            .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO)),
+    )
+    .layer(cors);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", cfg.port)).await?;
     tracing::info!(port = cfg.port, "mpex listening");
