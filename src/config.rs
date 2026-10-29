@@ -27,8 +27,9 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> Self {
         Self {
-            database_url: std::env::var("DATABASE_URL")
-                .unwrap_or_else(|_| "postgres://mpex:mpex@localhost:5432/mpex".into()),
+            // No baked-in default: a well-known credential in source is a
+            // secret leak. Set DATABASE_URL (compose injects it from .env).
+            database_url: std::env::var("DATABASE_URL").expect("DATABASE_URL must be set"),
             port: std::env::var("PORT")
                 .ok()
                 .and_then(|p| p.parse().ok())

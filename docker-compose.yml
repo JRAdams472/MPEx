@@ -3,7 +3,8 @@ services:
     image: postgres:18-alpine
     environment:
       POSTGRES_USER: mpex
-      POSTGRES_PASSWORD: mpex
+      # Injected from .env (gitignored) — compose fails closed when unset.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (see .env.example)}
       POSTGRES_DB: mpex
     ports:
       - "5432:5432"
@@ -19,7 +20,7 @@ services:
   api:
     build: .
     environment:
-      DATABASE_URL: postgres://mpex:mpex@db:5432/mpex
+      DATABASE_URL: postgres://mpex:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/mpex
       PORT: "8080"
       RUST_LOG: info,mpex=debug,tower_http=info
       CORS_ORIGIN: http://localhost:3000
@@ -34,7 +35,9 @@ services:
       # Observability exporters (both optional; unset = stdout JSON only).
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
       SEQ_URL: http://seq/ingest/otlp/v1/logs
-      # SEQ_API_KEY: ""   # set when Seq ingest auth is configured
+      # Seq ingest requires an API key — create one via seqcli/UI, then set
+      # SEQ_API_KEY in .env (see docs/security.md).
+      SEQ_API_KEY: ${SEQ_API_KEY:?set SEQ_API_KEY in .env (see .env.example)}
     volumes:
       - ./seed:/seed:ro
     ports:
@@ -51,8 +54,8 @@ services:
     image: dexidp/dex:v2.46.0
     command: ["dex", "serve", "/etc/dex/config.yaml"]
     environment:
-      DEX_MPEX_SVC_SECRET: ${DEX_MPEX_SVC_SECRET:-mpex-svc-dev-secret}
-      DEX_MPEX_CI_SECRET: ${DEX_MPEX_CI_SECRET:-mpex-ci-dev-secret}
+      DEX_MPEX_SVC_SECRET: ${DEX_MPEX_SVC_SECRET:?set DEX_MPEX_SVC_SECRET in .env}
+      DEX_MPEX_CI_SECRET: ${DEX_MPEX_CI_SECRET:?set DEX_MPEX_CI_SECRET in .env}
       DEX_CLIENT_CREDENTIAL_GRANT_ENABLED_BY_DEFAULT: "true"
     volumes:
       - ./dex/config.dev.yaml:/etc/dex/config.yaml:ro
@@ -70,7 +73,7 @@ services:
       OIDC_TOKEN_URL: http://dex:5556/dex/token
       OIDC_CLIENT_ID: mpex-web
       OIDC_REDIRECT_URI: http://localhost:3000/auth/callback
-      SESSION_SECRET: mpex-dev-session-secret-change-me
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
     ports:
       - "3000:3000"
     depends_on:
@@ -81,7 +84,11 @@ services:
     image: datalust/seq:2025.2
     environment:
       ACCEPT_EULA: "Y"
-      SEQ_FIRSTRUN_NOAUTHENTICATION: "true" # local dev only — no UI/ingest auth
+      # First-boot only: seeds the admin password HASH (no forced password
+      # change; generate with `seq config hash`, see docs/security.md) and
+      # requires auth for log ingestion too. Ignored once the data dir exists.
+      SEQ_FIRSTRUN_ADMINPASSWORDHASH: ${SEQ_ADMIN_PASSWORD_HASH:?set SEQ_ADMIN_PASSWORD_HASH in .env}
+      SEQ_FIRSTRUN_REQUIREAUTHENTICATIONFORHTTPINGESTION: "true"
     ports:
       - "5341:80"   # UI + ingest
     volumes:

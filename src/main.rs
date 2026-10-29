@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use axum::http::HeaderValue;
+use axum::http::{header, HeaderValue, Method};
 use mpex::rules::snapshot::SnapshotStore;
 use mpex::{api, config, db, seed, telemetry};
 use tower_http::cors::CorsLayer;
@@ -33,8 +33,10 @@ async fn main() -> anyhow::Result<()> {
                 .parse::<HeaderValue>()
                 .context("invalid CORS_ORIGIN")?,
         )
-        .allow_methods(tower_http::cors::Any)
-        .allow_headers(tower_http::cors::Any);
+        // Explicit surface, not Any: the BFF proxies browser traffic, so
+        // cross-origin callers only need these verbs/headers.
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
 
     let app = api::router(api::AppState {
         pool,
