@@ -1,0 +1,23 @@
+{
+  "$comment": "Documented npm-audit exceptions for scripts/audit.mjs. Each entry suppresses one advisory for the gate while keeping it visible in the report. Add an entry only when a fix does not exist or is infeasible; always record justification and a review trigger. Mirrors the .cargo/audit.toml ignore convention.",
+  "exceptions": [
+    {
+      "id": "GHSA-mrhx-c7xc-m3w5",
+      "package": "zod",
+      "via": "@gorules/jdm-editor",
+      "scope": "prod",
+      "severity": "high",
+      "justification": "Memory exhaustion while validating oversized constrained collections. No stable zod 3.x patch exists (3.26.0 is canary-only); zod@4 removes APIs that jdm-editor's bundled dist uses extensively (errorMap, invalid_type_error, nativeEnum, .passthrough(), .merge()), so an override would break the decision editor at runtime. The editor is client-side for authenticated pricer/admin users only; the vulnerable path is reachable via a crafted .jdm import, yielding a browser-tab DoS — no server exposure. Tracked in MPE-123.",
+      "review": "Remove when @gorules/jdm-editor ships fixed transitives (>1.52.0); Dependabot will surface the release."
+    },
+    {
+      "id": "GHSA-gcqx-w48m-w2h4",
+      "package": "deepmerge",
+      "via": "jest-config (dev-only)",
+      "scope": "dev",
+      "severity": "low",
+      "justification": "Prototype pollution in mergeObject(). deepmerge 4.3.1 is the latest release; no patch exists. Dev/test tooling only via jest-config — never bundled into or served by the application.",
+      "review": "On a deepmerge patch release or a jest major bump that drops the dependency."
+    }
+  ]
+}

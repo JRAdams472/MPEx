@@ -104,10 +104,15 @@ loan data.
 
 ## CI dependency scans
 
-`cargo audit` (RUSTSEC advisories) + `npm audit --audit-level=critical` gate
-every PR. Justified, unreachable-path ignores live in `.cargo/audit.toml`
-with the reasoning inline; known unfixable transitive advisories are tracked
-as Linear tickets, not ignored.
+`cargo audit` (RUSTSEC advisories) + a filtered `npm audit` gate
+(`clients/web/scripts/audit.mjs`, run via `npm run audit:gate`) gate every
+PR. The npm gate fails on un-excepted high/critical advisories in production
+dependencies; dev-only findings are reported but do not gate. Justified,
+unreachable-path ignores live in `.cargo/audit.toml` (Rust) and
+`clients/web/npm-audit-exceptions.json` (npm) with the reasoning and review
+trigger inline — e.g. jdm-editor's `zod@3` pin has no stable fix and a zod@4
+override would break the editor (MPE-123); the exception is removed when
+upstream ships fixed transitives.
 
 ## Audit
 

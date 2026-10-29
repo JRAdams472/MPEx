@@ -66,6 +66,12 @@ jobs:
   deps:
     name: Deps — cargo audit + npm audit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # audit-check publishes findings as a check run; without this the job
+      # fails post-audit with "Resource not accessible by integration" on
+      # push events.
+      checks: write
     steps:
       - uses: actions/checkout@v7
       - uses: rustsec/audit-check@v2
@@ -78,9 +84,11 @@ jobs:
           cache-dependency-path: clients/web/package-lock.json
       - run: npm ci
         working-directory: clients/web
-      # Gate on critical: jdm-editor's transitive uuid/zod advisories are
-      # unfixable without a breaking downgrade — tracked in a follow-up.
-      - run: npm audit --omit=dev --audit-level=critical
+      # Filtered audit gate: fails on un-excepted high/critical advisories in
+      # production deps; dev findings are report-only. Exceptions live in
+      # clients/web/npm-audit-exceptions.json with justification + review
+      # triggers — see scripts/audit.mjs.
+      - run: npm run audit:gate
         working-directory: clients/web
 
   e2e:
