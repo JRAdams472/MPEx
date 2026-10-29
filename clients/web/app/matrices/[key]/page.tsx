@@ -47,7 +47,7 @@ const KINDS = ["llpa", "eligibility", "pricing", "shared"];
 
 const SAMPLE_CONTEXT = `{
   "loan": { "ltv": 78.0, "amount": 320000, "termMonths": 360, "type": "conventional" },
-  "borrower": { "fico": 760 },
+  "borrower": { "creditScore": 760 },
   "property": { "state": "TX" },
   "scenario": { "lockTermDays": 30 }
 }`;

@@ -54,7 +54,7 @@ import { useMe } from "@/lib/me";
 const KINDS = ["llpa", "eligibility", "pricing", "shared"];
 
 const STARTER_SPEC = {
-  rows: [{ id: "r1", label: "FICO 740+", expr: "borrower.fico >= 740" }],
+  rows: [{ id: "r1", label: "FICO 740+", expr: "borrower.creditScore >= 740" }],
   cols: [{ id: "c1", label: "LTV ≤ 80", expr: "loan.ltv <= 80" }],
   cells: { "r1:c1": 0 },
   op: "sum",

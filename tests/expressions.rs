@@ -103,7 +103,7 @@ async fn eligible(app: &Router, ltv: f64) -> bool {
         app,
         "POST",
         "/api/evaluate/eligibility",
-        Some(json!({ "loan": { "loan": { "ltv": ltv }, "borrower": { "fico": 760 } } })),
+        Some(json!({ "loan": { "loan": { "ltv": ltv }, "borrower": { "creditScore": 760 } } })),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "evaluate failed: {body}");
@@ -181,7 +181,7 @@ async fn expressions_resolve_into_eval_snapshot() {
         &format!("/api/expressions/{EXPR_STD}"),
         Some(json!({
             "kind": "standard",
-            "expression": "borrower.fico >= 740 ? 'prime' : 'near-prime'"
+            "expression": "borrower.creditScore >= 740 ? 'prime' : 'near-prime'"
         })),
     )
     .await;

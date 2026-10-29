@@ -28,7 +28,7 @@ SELECT key, kind, product_code, status, jdm::jsonb FROM (VALUES
        "inputs": [
          {"id": "i1", "name": "Loan type",    "field": "loan.type"},
          {"id": "i2", "name": "LTV",          "field": "loan.ltv"},
-         {"id": "i3", "name": "FICO",         "field": "borrower.fico"},
+         {"id": "i3", "name": "FICO",         "field": "borrower.creditScore"},
          {"id": "i4", "name": "Occupancy",    "field": "property.occupancy"},
          {"id": "i5", "name": "Units",        "field": "loan.units"},
          {"id": "i6", "name": "Amortization", "field": "loan.amortization"},
@@ -40,7 +40,7 @@ SELECT key, kind, product_code, status, jdm::jsonb FROM (VALUES
        "rules": [
          {"_id": "r1", "i1": "!= 'conventional'", "o1": "'loan type must be conventional'"},
          {"_id": "r2", "i2": "> 97",              "o1": "'ltv exceeds 97%'"},
-         {"_id": "r3", "i3": "< 620",             "o1": "'fico below 620'"},
+         {"_id": "r3", "i3": "< 620",             "o1": "'creditScore below 620'"},
          {"_id": "r4", "i5": "> 4",               "o1": "'max 4 units'"},
          {"_id": "r5", "i6": "'arm'",             "o1": "'fixed rate only'"},
          {"_id": "r6", "i7": "!= 360",            "o1": "'30-year term only'"}
@@ -71,7 +71,7 @@ SELECT key, kind, product_code, status, jdm::jsonb FROM (VALUES
        "inputs": [
          {"id": "i1", "name": "Loan type",    "field": "loan.type"},
          {"id": "i2", "name": "LTV",          "field": "loan.ltv"},
-         {"id": "i3", "name": "FICO",         "field": "borrower.fico"},
+         {"id": "i3", "name": "FICO",         "field": "borrower.creditScore"},
          {"id": "i5", "name": "Units",        "field": "loan.units"},
          {"id": "i6", "name": "Amortization", "field": "loan.amortization"},
          {"id": "i7", "name": "Term",         "field": "loan.termMonths"}
@@ -80,7 +80,7 @@ SELECT key, kind, product_code, status, jdm::jsonb FROM (VALUES
        "rules": [
          {"_id": "r1", "i1": "!= 'conventional'", "o1": "'loan type must be conventional'"},
          {"_id": "r2", "i2": "> 97",              "o1": "'ltv exceeds 97%'"},
-         {"_id": "r3", "i3": "< 620",             "o1": "'fico below 620'"},
+         {"_id": "r3", "i3": "< 620",             "o1": "'creditScore below 620'"},
          {"_id": "r5", "i5": "> 4",               "o1": "'max 4 units'"},
          {"_id": "r6", "i6": "'arm'",             "o1": "'fixed rate only'"},
          {"_id": "r7", "i7": "!= 180",            "o1": "'15-year term only'"}
@@ -111,7 +111,7 @@ SELECT key, kind, product_code, status, jdm::jsonb FROM (VALUES
        "inputs": [
          {"id": "i1", "name": "Loan type",    "field": "loan.type"},
          {"id": "i2", "name": "LTV",          "field": "loan.ltv"},
-         {"id": "i3", "name": "FICO",         "field": "borrower.fico"},
+         {"id": "i3", "name": "FICO",         "field": "borrower.creditScore"},
          {"id": "i5", "name": "Units",        "field": "loan.units"},
          {"id": "i6", "name": "Amortization", "field": "loan.amortization"},
          {"id": "i8", "name": "ARM months",   "field": "loan.arm.initialFixedMonths"}
@@ -120,7 +120,7 @@ SELECT key, kind, product_code, status, jdm::jsonb FROM (VALUES
        "rules": [
          {"_id": "r1", "i1": "!= 'conventional'", "o1": "'loan type must be conventional'"},
          {"_id": "r2", "i2": "> 95",              "o1": "'ltv exceeds 95% for ARM'"},
-         {"_id": "r3", "i3": "< 620",             "o1": "'fico below 620'"},
+         {"_id": "r3", "i3": "< 620",             "o1": "'creditScore below 620'"},
          {"_id": "r5", "i5": "> 4",               "o1": "'max 4 units'"},
          {"_id": "r6", "i6": "'fixed'",           "o1": "'arm amortization only'"},
          {"_id": "r7", "i8": "!= 84",             "o1": "'7/6 ARM only (84mo fixed)'"}
@@ -151,7 +151,7 @@ SELECT key, kind, product_code, status, jdm::jsonb FROM (VALUES
        "inputs": [
          {"id": "i1", "name": "Loan type",    "field": "loan.type"},
          {"id": "i2", "name": "LTV",          "field": "loan.ltv"},
-         {"id": "i3", "name": "FICO",         "field": "borrower.fico"},
+         {"id": "i3", "name": "FICO",         "field": "borrower.creditScore"},
          {"id": "i4", "name": "Occupancy",    "field": "property.occupancy"},
          {"id": "i5", "name": "Units",        "field": "loan.units"},
          {"id": "i7", "name": "Term",         "field": "loan.termMonths"}
@@ -160,7 +160,7 @@ SELECT key, kind, product_code, status, jdm::jsonb FROM (VALUES
        "rules": [
          {"_id": "r1", "i1": "!= 'fha'",        "o1": "'loan type must be fha'"},
          {"_id": "r2", "i2": "> 96.5",          "o1": "'ltv exceeds 96.5%'"},
-         {"_id": "r3", "i3": "< 580",           "o1": "'fico below 580'"},
+         {"_id": "r3", "i3": "< 580",           "o1": "'creditScore below 580'"},
          {"_id": "r4", "i4": "!= 'primary'",    "o1": "'fha requires primary occupancy'"},
          {"_id": "r5", "i5": "> 4",             "o1": "'max 4 units'"},
          {"_id": "r6", "i7": "!= 360",          "o1": "'30-year term only'"}
@@ -191,7 +191,7 @@ SELECT key, kind, product_code, status, jdm::jsonb FROM (VALUES
        "inputs": [
          {"id": "i1", "name": "Loan type", "field": "loan.type"},
          {"id": "i2", "name": "LTV",       "field": "loan.ltv"},
-         {"id": "i3", "name": "FICO",      "field": "borrower.fico"},
+         {"id": "i3", "name": "FICO",      "field": "borrower.creditScore"},
          {"id": "i4", "name": "Amount",    "field": "loan.amount"},
          {"id": "i5", "name": "Units",     "field": "loan.units"},
          {"id": "i7", "name": "Term",      "field": "loan.termMonths"}
@@ -200,7 +200,7 @@ SELECT key, kind, product_code, status, jdm::jsonb FROM (VALUES
        "rules": [
          {"_id": "r1", "i1": "!= 'jumbo'",      "o1": "'loan type must be jumbo'"},
          {"_id": "r2", "i2": "> 80",            "o1": "'ltv exceeds 80%'"},
-         {"_id": "r3", "i3": "< 700",           "o1": "'fico below 700'"},
+         {"_id": "r3", "i3": "< 700",           "o1": "'creditScore below 700'"},
          {"_id": "r4", "i4": "<= 832750",       "o1": "'amount not above conforming limit'"},
          {"_id": "r5", "i5": "> 1",             "o1": "'single unit only'"},
          {"_id": "r6", "i7": "!= 360",          "o1": "'30-year term only'"}

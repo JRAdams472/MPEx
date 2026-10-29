@@ -81,7 +81,7 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
 fn loan() -> Value {
     json!({
         "loan": { "type": "conventional", "ltv": 81.0, "termMonths": 360 },
-        "borrower": { "fico": 760 },
+        "borrower": { "creditScore": 760 },
         "scenario": { "lockTermDays": 30 }
     })
 }
@@ -153,7 +153,7 @@ async fn seed(pool: &PgPool, fx: &Fixture) -> Router {
             "productCode": fx.product,
             "spec": {
                 "rows": [{"id": "hi", "expr": "loan.ltv > 80"}],
-                "cols": [{"id": "fico", "expr": "borrower.fico >= 740"}],
+                "cols": [{"id": "fico", "expr": "borrower.creditScore >= 740"}],
                 "cells": { "hi:fico": -0.25 },
                 "op": "sum"
             }

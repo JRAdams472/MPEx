@@ -25,7 +25,7 @@ import { useMe } from "@/lib/me";
 
 const SAMPLE_LOAN = `{
   "loan": { "ltv": 78.0, "amount": 320000, "termMonths": 360, "purpose": "purchase", "type": "conventional" },
-  "borrower": { "fico": 760 },
+  "borrower": { "creditScore": 760 },
   "property": { "type": "sfr", "occupancy": "primary", "state": "TX" },
   "scenario": { "lockTermDays": 30 }
 }`;

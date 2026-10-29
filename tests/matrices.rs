@@ -20,8 +20,8 @@ fn demo_spec() -> Value {
             {"id": "rC", "label": "LTV > 90",  "expr": "loan.ltv > 90"}
         ],
         "cols": [
-            {"id": "cX", "label": "FICO >= 700", "expr": "borrower.fico >= 700"},
-            {"id": "cY", "label": "FICO >= 780", "expr": "borrower.fico >= 780"}
+            {"id": "cX", "label": "FICO >= 700", "expr": "borrower.creditScore >= 700"},
+            {"id": "cY", "label": "FICO >= 780", "expr": "borrower.creditScore >= 780"}
         ],
         "cells": {
             "rA:cX": -0.25,
@@ -34,7 +34,7 @@ fn demo_spec() -> Value {
 }
 
 fn demo_ctx() -> Value {
-    json!({ "loan": { "ltv": 81.0 }, "borrower": { "fico": 750 } })
+    json!({ "loan": { "ltv": 81.0 }, "borrower": { "creditScore": 750 } })
 }
 
 #[tokio::test]
@@ -177,7 +177,7 @@ async fn eval_at(snapshots: &SnapshotStore, revision: Revision, ctx: Value) -> V
 fn spec_with_cell(value: f64) -> Value {
     json!({
         "rows": [{"id": "rA", "expr": "loan.ltv > 75"}],
-        "cols": [{"id": "cX", "expr": "borrower.fico >= 700"}],
+        "cols": [{"id": "cX", "expr": "borrower.creditScore >= 700"}],
         "cells": { "rA:cX": value },
         "op": "sum"
     })

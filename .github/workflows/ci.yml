@@ -146,7 +146,7 @@ jobs:
             -H "authorization: Bearer $TOKEN" \
             -H 'content-type: application/json' -d '{
               "spec": {
-                "rows": [{"id":"hi","expr":"borrower.fico >= 740"},{"id":"mid","expr":"borrower.fico >= 700"}],
+                "rows": [{"id":"hi","expr":"borrower.creditScore >= 740"},{"id":"mid","expr":"borrower.creditScore >= 700"}],
                 "cols": [{"id":"ltv80","expr":"loan.ltv <= 80"},{"id":"ltv90","expr":"loan.ltv <= 90"}],
                 "cells": {"hi:ltv80":-0.25,"hi:ltv90":0.0,"mid:ltv80":-0.125,"mid:ltv90":0.25},
                 "op": "sum"

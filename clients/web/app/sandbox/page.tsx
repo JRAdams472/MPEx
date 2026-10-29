@@ -40,12 +40,13 @@ const SAMPLE = {
     ltv: 78,
   },
   property: { type: "sfr", occupancy: "primary", state: "TX" },
-  borrower: { fico: 760 },
+  borrower: { creditScore: 760, creditModel: "FICO" },
   scenario: { lockTermDays: 30 },
 };
 
 const LOAN_TYPES = ["conventional", "fha", "va", "usda", "jumbo"];
 const PURPOSES = ["purchase", "rateTermRefi", "cashOutRefi"];
+const CREDIT_MODELS = ["FICO", "VantageScore", "F10T"];
 const PROPERTY_TYPES = [
   "sfr",
   "condo",
@@ -67,7 +68,8 @@ type Fields = {
   propertyType: string;
   occupancy: string;
   state: string;
-  fico: string;
+  creditScore: string;
+  creditModel: string;
   lockTermDays: string;
 };
 
@@ -83,7 +85,8 @@ function toFields(loan: typeof SAMPLE): Fields {
     propertyType: loan.property.type,
     occupancy: loan.property.occupancy,
     state: loan.property.state,
-    fico: String(loan.borrower.fico),
+    creditScore: String(loan.borrower.creditScore),
+    creditModel: String(loan.borrower.creditModel ?? "FICO"),
     lockTermDays: String(loan.scenario.lockTermDays),
   };
 }
@@ -114,7 +117,9 @@ function toLoan(f: Fields, extras: Record<string, unknown>) {
   if (f.propertyType) property.type = f.propertyType;
   if (f.occupancy) property.occupancy = f.occupancy;
   if (f.state) property.state = f.state;
-  if (num(f.fico) !== undefined) borrower.fico = num(f.fico);
+  if (num(f.creditScore) !== undefined)
+    borrower.creditScore = num(f.creditScore);
+  if (f.creditModel) borrower.creditModel = f.creditModel;
   if (num(f.lockTermDays) !== undefined)
     scenario.lockTermDays = num(f.lockTermDays);
   return { ...extras, loan, property, borrower, scenario };
@@ -329,10 +334,23 @@ export default function SandboxPage() {
             />
             <TextField
               size="small"
-              label="FICO"
-              value={fields.fico}
-              onChange={set("fico")}
+              label="Credit score"
+              value={fields.creditScore}
+              onChange={set("creditScore")}
             />
+            <TextField
+              size="small"
+              select
+              label="Credit model"
+              value={fields.creditModel}
+              onChange={set("creditModel")}
+            >
+              {CREDIT_MODELS.map((m) => (
+                <MenuItem key={m} value={m}>
+                  {m}
+                </MenuItem>
+              ))}
+            </TextField>
             <TextField
               size="small"
               label="Lock term (days)"

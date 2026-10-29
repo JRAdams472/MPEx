@@ -120,7 +120,7 @@ async fn evaluate_rejects_pii_with_path_only() {
             "loan": {"purpose": "purchase", "type": "conventional", "amount": 450000,
                      "termMonths": 360, "ltv": 80.0, "dti": 36.5},
             "property": {"type": "sfr", "occupancy": "primary", "state": "TX"},
-            "borrower": {"fico": 740, "existingLiens": 0},
+            "borrower": {"creditScore": 740, "existingLiens": 0},
             "scenario": {"lockTermDays": 30}
         }}),
     )
@@ -179,7 +179,7 @@ async fn eval_payloads_never_reach_logs() {
         &admin,
         json!({ "loan": {
             "loan": {"amount": 450000, "ltv": 80.0},
-            "borrower": {"fico": 740},
+            "borrower": {"creditScore": 740},
             "notes": alpha
         }}),
     )
