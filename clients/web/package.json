@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc6 --noEmit",
     "test": "jest",
     "e2e": "playwright test"
   },
@@ -28,6 +28,7 @@
     "@eslint-react/eslint-plugin": "^5.28.8",
     "@next/eslint-plugin-next": "16.4.3",
     "@playwright/test": "^1.64.1",
+    "@typescript/native": "npm:typescript@^7",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
@@ -42,7 +43,7 @@
     "globals": "^17.13.0",
     "jest": "^30.5.2",
     "jest-environment-jsdom": "^30.5.2",
-    "typescript": "^5.9.0",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
     "typescript-eslint": "^8.72.1"
   }
 }
