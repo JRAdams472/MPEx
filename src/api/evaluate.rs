@@ -26,6 +26,9 @@ pub async fn eligibility(
     State(state): State<AppState>,
     Json(req): Json<EvaluateRequest>,
 ) -> Result<Json<Value>, AppError> {
+    // PII guard before the model parse: reject personal-data fields/values
+    // outright — the loan model carries loan attributes only.
+    crate::security::pii_guard::check_loan(&req.loan)?;
     LoanScenario::parse(&req.loan)
         .map_err(|e| AppError::BadRequest(format!("invalid loan model: {e}")))?;
     let revision = EvalRevision::parse(req.as_of.as_deref())?;
@@ -69,6 +72,7 @@ pub async fn pricing(
     State(state): State<AppState>,
     Json(req): Json<PricingRequest>,
 ) -> Result<Json<Value>, AppError> {
+    crate::security::pii_guard::check_loan(&req.loan)?;
     LoanScenario::parse(&req.loan)
         .map_err(|e| AppError::BadRequest(format!("invalid loan model: {e}")))?;
     let revision = EvalRevision::parse(req.as_of.as_deref())?;

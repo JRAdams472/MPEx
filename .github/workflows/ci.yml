@@ -51,6 +51,18 @@ jobs:
       - run: npm test -- --ci
       - run: npm run build
 
+  gitleaks:
+    name: gitleaks — secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
   e2e:
     name: E2E — Playwright (seeded stack)
     runs-on: ubuntu-latest

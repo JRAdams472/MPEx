@@ -1,0 +1,11 @@
+# MPE-97 phase 6 — secret scanning for MPEx.
+#
+# .env.example ships placeholders ONLY (empty values / __NAME__ markers) —
+# it exists to document the variable names, so allow it outright rather
+# than let placeholder edits flake the scan. Everything else is scanned.
+
+[allowlist]
+description = "MPEx placeholder files + test fixtures"
+paths = [
+  '''\.env\.example''',
+]
