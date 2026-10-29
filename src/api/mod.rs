@@ -1,3 +1,4 @@
+mod audit;
 mod auth;
 mod decisions;
 mod evaluate;
@@ -108,9 +109,12 @@ pub fn router(state: AppState) -> Router {
             role_gate,
         ));
 
-    // admin-only: publishing stamps every changed draft.
+    // admin-only: publishing stamps every changed draft; the audit trail is
+    // readable + verifiable by admins only.
     let admin = Router::new()
         .route("/api/publications", post(publications::create))
+        .route("/api/audit", get(audit::list))
+        .route("/api/audit/verify", get(audit::verify))
         .route_layer(middleware::from_fn_with_state(
             (state.clone(), ADMIN),
             role_gate,

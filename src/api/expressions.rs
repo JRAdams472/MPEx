@@ -177,6 +177,7 @@ pub struct UpsertExpression {
 /// the matching ZEN parser before it's stored.
 pub async fn put(
     State(state): State<AppState>,
+    principal: crate::auth::Principal,
     Path(key): Path<String>,
     Json(req): Json<UpsertExpression>,
 ) -> Result<Json<Value>, AppError> {
@@ -201,6 +202,7 @@ pub async fn put(
         return Err(AppError::BadRequest(format!("invalid expression: {e}")));
     }
 
+    let mut tx = state.pool.begin().await?;
     let row = sqlx::query_as::<_, ExpressionRow>(&format!(
         "INSERT INTO expressions (key, kind, description, status, expression)
              VALUES ($1, $2, $3, 'draft', $4)
@@ -215,23 +217,52 @@ pub async fn put(
     .bind(&kind)
     .bind(req.description.unwrap_or_default())
     .bind(&req.expression)
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *tx)
     .await?;
+    crate::audit::record(
+        &mut tx,
+        &principal,
+        crate::audit::Event {
+            action: crate::audit::action::ARTIFACT_PUT,
+            artifact_table: Some("expressions"),
+            artifact_key: Some(key.clone()),
+            detail: json!({
+                "kind": kind,
+                "contentHash": crate::audit::content_hash_str(&req.expression),
+            }),
+        },
+    )
+    .await?;
+    tx.commit().await?;
     Ok(Json(row_json(row)))
 }
 
 /// Deletes the draft only; published history is immutable and stays.
 pub async fn delete(
     State(state): State<AppState>,
+    principal: crate::auth::Principal,
     Path(key): Path<String>,
 ) -> Result<StatusCode, AppError> {
+    let mut tx = state.pool.begin().await?;
     let n = sqlx::query("DELETE FROM expressions WHERE key = $1 AND status = 'draft'")
         .bind(&key)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await?
         .rows_affected();
     if n == 0 {
         return Err(AppError::NotFound(format!("draft expression {key}")));
     }
+    crate::audit::record(
+        &mut tx,
+        &principal,
+        crate::audit::Event {
+            action: crate::audit::action::ARTIFACT_DELETE,
+            artifact_table: Some("expressions"),
+            artifact_key: Some(key),
+            detail: json!({}),
+        },
+    )
+    .await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }

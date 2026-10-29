@@ -157,6 +157,7 @@ pub struct UpsertSheet {
 /// product must already exist.
 pub async fn put(
     State(state): State<AppState>,
+    principal: crate::auth::Principal,
     Path(key): Path<String>,
     Json(req): Json<UpsertSheet>,
 ) -> Result<Json<Value>, AppError> {
@@ -171,6 +172,7 @@ pub async fn put(
         )));
     }
 
+    let mut tx = state.pool.begin().await?;
     let row = sqlx::query_as::<_, SheetRow>(&format!(
         "INSERT INTO rate_sheets (key, status, spec)
              VALUES ($1, 'draft', $2)
@@ -180,23 +182,51 @@ pub async fn put(
     ))
     .bind(&key)
     .bind(&req.spec)
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *tx)
     .await?;
+    crate::audit::record(
+        &mut tx,
+        &principal,
+        crate::audit::Event {
+            action: crate::audit::action::ARTIFACT_PUT,
+            artifact_table: Some("rate_sheets"),
+            artifact_key: Some(key.clone()),
+            detail: json!({
+                "contentHash": crate::audit::content_hash(&req.spec),
+            }),
+        },
+    )
+    .await?;
+    tx.commit().await?;
     Ok(Json(row_json(row)))
 }
 
 /// Deletes the draft only; published history is immutable and stays.
 pub async fn delete(
     State(state): State<AppState>,
+    principal: crate::auth::Principal,
     Path(key): Path<String>,
 ) -> Result<StatusCode, AppError> {
+    let mut tx = state.pool.begin().await?;
     let n = sqlx::query("DELETE FROM rate_sheets WHERE key = $1 AND status = 'draft'")
         .bind(&key)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await?
         .rows_affected();
     if n == 0 {
         return Err(AppError::NotFound(format!("draft rate sheet {key}")));
     }
+    crate::audit::record(
+        &mut tx,
+        &principal,
+        crate::audit::Event {
+            action: crate::audit::action::ARTIFACT_DELETE,
+            artifact_table: Some("rate_sheets"),
+            artifact_key: Some(key),
+            detail: json!({}),
+        },
+    )
+    .await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
