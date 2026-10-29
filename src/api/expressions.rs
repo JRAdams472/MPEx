@@ -119,6 +119,7 @@ pub async fn get(
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> Result<Json<Value>, AppError> {
+    super::validate::validate_key(&key)?;
     let draft = sqlx::query_as::<_, ExpressionRow>(&format!(
         "SELECT {ROW_COLS} FROM expressions WHERE key = $1 AND status = 'draft'"
     ))
@@ -181,6 +182,8 @@ pub async fn put(
     Path(key): Path<String>,
     Json(req): Json<UpsertExpression>,
 ) -> Result<Json<Value>, AppError> {
+    super::validate::validate_key(&key)?;
+    super::validate::validate_expression_source(&req.expression)?;
     if req.expression.trim().is_empty() {
         return Err(AppError::BadRequest("expression must not be empty".into()));
     }
@@ -243,6 +246,7 @@ pub async fn delete(
     principal: crate::auth::Principal,
     Path(key): Path<String>,
 ) -> Result<StatusCode, AppError> {
+    super::validate::validate_key(&key)?;
     let mut tx = state.pool.begin().await?;
     let n = sqlx::query("DELETE FROM expressions WHERE key = $1 AND status = 'draft'")
         .bind(&key)

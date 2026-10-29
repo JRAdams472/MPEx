@@ -38,10 +38,15 @@ async fn main() -> anyhow::Result<()> {
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
 
+    // Per-IP limits come from env (None = RATE_LIMIT_DISABLE); they ride in
+    // AppState so test routers simply leave them unset and un-throttled.
+    let rate_limits = mpex::limits::EdgeLimits::from_env();
+
     let app = api::router(api::AppState {
         pool,
         snapshots,
         auth,
+        rate_limits,
     })
     // INFO so request spans survive the EnvFilter and reach the OTLP
     // trace exporter (the DefaultMakeSpan default is DEBUG).
@@ -53,7 +58,11 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", cfg.port)).await?;
     tracing::info!(port = cfg.port, "mpex listening");
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
     telemetry_guard.shutdown();
     Ok(())
 }

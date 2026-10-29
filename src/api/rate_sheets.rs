@@ -101,6 +101,7 @@ pub async fn get(
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> Result<Json<Value>, AppError> {
+    super::validate::validate_key(&key)?;
     let draft = sqlx::query_as::<_, SheetRow>(&format!(
         "SELECT {ROW_COLS} FROM rate_sheets WHERE key = $1 AND status = 'draft'"
     ))
@@ -161,6 +162,8 @@ pub async fn put(
     Path(key): Path<String>,
     Json(req): Json<UpsertSheet>,
 ) -> Result<Json<Value>, AppError> {
+    super::validate::validate_key(&key)?;
+    super::validate::validate_spec_size(&req.spec, "spec")?;
     RateSheetSpec::parse(&req.spec).map_err(AppError::BadRequest)?;
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM products WHERE code = $1)")
         .bind(&key)
@@ -207,6 +210,7 @@ pub async fn delete(
     principal: crate::auth::Principal,
     Path(key): Path<String>,
 ) -> Result<StatusCode, AppError> {
+    super::validate::validate_key(&key)?;
     let mut tx = state.pool.begin().await?;
     let n = sqlx::query("DELETE FROM rate_sheets WHERE key = $1 AND status = 'draft'")
         .bind(&key)

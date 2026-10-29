@@ -131,6 +131,7 @@ pub async fn get(
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> Result<Json<Value>, AppError> {
+    super::validate::validate_key(&key)?;
     let draft = sqlx::query_as::<_, DecisionRow>(&format!(
         "SELECT {ROW_COLS} FROM decisions WHERE key = $1 AND status = 'draft'"
     ))
@@ -193,6 +194,11 @@ pub async fn put(
     Path(key): Path<String>,
     Json(req): Json<UpsertDecision>,
 ) -> Result<Json<Value>, AppError> {
+    super::validate::validate_key(&key)?;
+    super::validate::validate_spec_size(&req.jdm, "jdm")?;
+    if let Some(code) = &req.product_code {
+        super::validate::validate_key(code)?;
+    }
     let kind = req.kind.unwrap_or_else(|| "shared".into());
     if !KINDS.contains(&kind.as_str()) {
         return Err(AppError::BadRequest(format!(
@@ -259,6 +265,7 @@ pub async fn delete(
     principal: crate::auth::Principal,
     Path(key): Path<String>,
 ) -> Result<StatusCode, AppError> {
+    super::validate::validate_key(&key)?;
     let mut tx = state.pool.begin().await?;
     let n = sqlx::query("DELETE FROM decisions WHERE key = $1 AND status = 'draft'")
         .bind(&key)

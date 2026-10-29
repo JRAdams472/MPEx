@@ -171,6 +171,7 @@ async fn expressions_resolve_into_eval_snapshot() {
         pool: pool.clone(),
         snapshots: Arc::new(SnapshotStore::new(pool.clone())),
         auth: Some(testkit::test_context(pool.clone())),
+        rate_limits: None,
     });
 
     // standard expression: fico band string
