@@ -20,10 +20,15 @@ import TableChartIcon from "@mui/icons-material/TableChart";
 import ScienceIcon from "@mui/icons-material/Science";
 import PublishIcon from "@mui/icons-material/Publish";
 import HistoryIcon from "@mui/icons-material/History";
+import LogoutIcon from "@mui/icons-material/Logout";
+import Chip from "@mui/material/Chip";
+import IconButton from "@mui/material/IconButton";
+import Tooltip from "@mui/material/Tooltip";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
+import { useMe } from "@/lib/me";
 import PublishDialog from "./PublishDialog";
 
 const DRAWER_WIDTH = 232;
@@ -42,6 +47,7 @@ const NAV = [
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [publishOpen, setPublishOpen] = useState(false);
+  const { me, canPublish } = useMe();
 
   return (
     <Box sx={{ display: "flex", minHeight: "100vh" }}>
@@ -67,14 +73,28 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <Typography variant="body2" color="text.secondary" sx={{ flexGrow: 1 }}>
             Mortgage product eligibility &amp; pricing
           </Typography>
-          <Button
-            variant="contained"
-            size="small"
-            startIcon={<PublishIcon />}
-            onClick={() => setPublishOpen(true)}
-          >
-            Publish
-          </Button>
+          {canPublish && (
+            <Button
+              variant="contained"
+              size="small"
+              startIcon={<PublishIcon />}
+              onClick={() => setPublishOpen(true)}
+            >
+              Publish
+            </Button>
+          )}
+          {me && (
+            <Chip
+              size="small"
+              variant="outlined"
+              label={`${me.email ?? me.sub} · ${me.roles.join(", ") || "no roles"}`}
+            />
+          )}
+          <Tooltip title="Sign out">
+            <IconButton size="small" component="a" href="/auth/logout">
+              <LogoutIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
         </Toolbar>
       </AppBar>
 

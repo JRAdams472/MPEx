@@ -4,11 +4,11 @@
 -- tokens carry the client_id in `aud`.
 -- Runs via RUN_SEED=1 — dev-only data, idempotent.
 
-INSERT INTO role_grants (subject, role, granted_by)
-SELECT * FROM (VALUES
+INSERT INTO role_grants (subject, role, granted_by) VALUES
   ('admin@mpex.dev',  'admin',   'dev-seed'),
   ('pricer@mpex.dev', 'pricer',  'dev-seed'),
   ('viewer@mpex.dev', 'viewer',  'dev-seed'),
-  ('mpex-svc',        'service', 'dev-seed')
-) AS v(subject, role, granted_by)
-WHERE NOT EXISTS (SELECT 1 FROM role_grants);
+  ('mpex-svc',        'service', 'dev-seed'),
+  -- Automation identity (CI seeding, tooling) — aud-keyed like mpex-svc.
+  ('mpex-ci',         'admin',   'dev-seed')
+ON CONFLICT (subject, role) DO NOTHING;

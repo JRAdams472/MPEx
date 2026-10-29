@@ -95,6 +95,26 @@ async fn live_api_smoke() {
         return;
     };
     let client = reqwest::Client::new();
+    // Eval routes require auth: mint a service token via client-credentials
+    // when the IdP env is provided (dev defaults match docker-compose dex).
+    let token_url = std::env::var("MPEX_TOKEN_URL")
+        .unwrap_or_else(|_| "http://localhost:5556/dex/token".into());
+    let client_id = std::env::var("MPEX_CLIENT_ID").unwrap_or_else(|_| "mpex-svc".into());
+    let client_secret =
+        std::env::var("MPEX_CLIENT_SECRET").unwrap_or_else(|_| "mpex-svc-dev-secret".into());
+    let token: String = client
+        .post(&token_url)
+        .basic_auth(client_id, Some(client_secret))
+        .form(&[("grant_type", "client_credentials"), ("scope", "openid")])
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["access_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let loan = json!({
         "loan": {"purpose": "purchase", "type": "conventional", "amount": 450000,
                  "termMonths": 360, "amortization": "fixed", "ltv": 80.0, "dti": 36, "units": 1},
@@ -104,6 +124,7 @@ async fn live_api_smoke() {
     });
     let res: serde_json::Value = client
         .post(format!("{base}/api/evaluate/eligibility"))
+        .bearer_auth(token)
         .json(&json!({ "loan": loan }))
         .send()
         .await

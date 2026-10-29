@@ -23,16 +23,17 @@ logger:
 
 enablePasswordDB: true
 staticPasswords:
+  # Dev credentials — password is the username + "123" (admin123 etc).
   - email: "admin@mpex.dev"
-    hash: "$2b$10$hyoS/9Z5kQLVAxRhDcjXEe96eqtyFYgG/dLT3kuPJPx2.TehXHA7q"
+    hash: "$2b$10$erUgPFIRhvwgr1Q7hVUXt.2i5QLFL2ehOLtDkC1ZBdycAXIdMrjSS"
     username: "admin"
     userID: "admin-user"
   - email: "pricer@mpex.dev"
-    hash: "$2b$10$yJ0djJaKfmrEddOrXPM1N.hvqkYO0VzXqitT7a2y6ZyOdmNwRM5oS"
+    hash: "$2b$10$HlGOcHTMdr9SfDSvGXcsq.Ff2ux5gpf32kJsGytulbKDCuBxsTcSq"
     username: "pricer"
     userID: "pricer-user"
   - email: "viewer@mpex.dev"
-    hash: "$2b$10$QzV6AHLvS8k2LGYTQ9oJfOhrw5DkIcGcWcCzZF7X0DShkeRj5.s.m"
+    hash: "$2b$10$Y55JS88WBjLVjZkYhCNFgeLjku8k.r4jtap3dtielQszVaIwEuy2u"
     username: "viewer"
     userID: "viewer-user"
 
@@ -45,3 +46,8 @@ staticClients:
   - id: mpex-svc
     name: "MPEx service account"
     secretEnv: DEX_MPEX_SVC_SECRET
+  # CI/admin automation identity — client-credentials mint for seeding and
+  # tooling (aud-keyed role_grants give it 'admin' in the dev seed).
+  - id: mpex-ci
+    name: "MPEx CI/automation"
+    secretEnv: DEX_MPEX_CI_SECRET

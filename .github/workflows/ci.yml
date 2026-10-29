@@ -74,19 +74,38 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build
+      - name: Start Dex (dev IdP)
+        run: |
+          docker run -d --name dex -p 5556:5556 \
+            -v "$PWD/dex/config.dev.yaml:/etc/dex/config.yaml" \
+            -e DEX_MPEX_SVC_SECRET=mpex-svc-dev-secret \
+            -e DEX_MPEX_CI_SECRET=mpex-ci-dev-secret \
+            dexidp/dex:v2.46.0 dex serve /etc/dex/config.yaml
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:5556/dex/.well-known/openid-configuration >/dev/null && exit 0 || sleep 1
+          done
+          echo "Dex did not come up"; exit 1
       - name: Start API (seeded)
         run: |
-          RUN_SEED=1 ./target/debug/mpex &
+          RUN_SEED=1 \
+          OIDC_ISSUER=http://localhost:5556/dex \
+          OIDC_AUDIENCE=mpex-api,mpex-web,mpex-svc,mpex-ci \
+          ./target/debug/mpex &
           for i in $(seq 1 60); do
             curl -sf http://localhost:8080/healthz && exit 0 || sleep 1
           done
           echo "API did not come up"; exit 1
       # The SQL seed covers products + decisions only; create the matrix and
       # rate sheet through the API (same path the UI uses) so the sandbox
-      # specs have a real pricing waterfall to assert on.
+      # specs have a real pricing waterfall to assert on. Mutation routes are
+      # admin-gated — mint an mpex-ci client-credentials token for the calls.
       - name: Seed demo artifacts + publish
         run: |
+          TOKEN=$(curl -sf -X POST http://localhost:5556/dex/token \
+            -u mpex-ci:mpex-ci-dev-secret \
+            -d "grant_type=client_credentials&scope=openid" | jq -r .access_token)
           curl -sf -X PUT http://localhost:8080/api/matrices/llpa.fico-ltv \
+            -H "authorization: Bearer $TOKEN" \
             -H 'content-type: application/json' -d '{
               "spec": {
                 "rows": [{"id":"hi","expr":"borrower.fico >= 740"},{"id":"mid","expr":"borrower.fico >= 700"}],
@@ -96,6 +115,7 @@ jobs:
               }
             }' >/dev/null
           curl -sf -X PUT http://localhost:8080/api/rate-sheets/CONV30 \
+            -H "authorization: Bearer $TOKEN" \
             -H 'content-type: application/json' -d '{
               "spec": {
                 "rates": [6.25, 6.5, 6.75],
@@ -108,6 +128,7 @@ jobs:
               }
             }' >/dev/null
           curl -sf -X POST http://localhost:8080/api/publications \
+            -H "authorization: Bearer $TOKEN" \
             -H 'content-type: application/json' -d '{"label":"e2e-seed"}' >/dev/null
       - uses: actions/setup-node@v4
         with:
@@ -123,6 +144,13 @@ jobs:
       - run: npm run build
         working-directory: clients/web
       - name: Start web
+        env:
+          API_URL: http://localhost:8080
+          OIDC_ISSUER: http://localhost:5556/dex
+          OIDC_TOKEN_URL: http://localhost:5556/dex/token
+          OIDC_CLIENT_ID: mpex-web
+          OIDC_REDIRECT_URI: http://localhost:3000/auth/callback
+          SESSION_SECRET: e2e-session-secret
         run: |
           npm start &
           for i in $(seq 1 60); do

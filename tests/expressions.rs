@@ -15,6 +15,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use mpex::api::{self, AppState};
+use mpex::auth::testkit;
 use mpex::rules::snapshot::SnapshotStore;
 
 const PRODUCT: &str = "P8ETEST";
@@ -79,6 +80,10 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
         .method(method)
         .uri(uri)
         .header("content-type", "application/json")
+        .header(
+            "authorization",
+            format!("Bearer {}", testkit::admin_token()),
+        )
         .body(match body {
             Some(b) => Body::from(serde_json::to_vec(&b).unwrap()),
             None => Body::empty(),
@@ -149,6 +154,7 @@ async fn expressions_resolve_into_eval_snapshot() {
     };
     let pool = PgPool::connect(&url).await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    testkit::ensure_grants(&pool).await;
     cleanup(&pool).await;
 
     sqlx::query(
@@ -164,7 +170,7 @@ async fn expressions_resolve_into_eval_snapshot() {
     let app = api::router(AppState {
         pool: pool.clone(),
         snapshots: Arc::new(SnapshotStore::new(pool.clone())),
-        auth: None,
+        auth: Some(testkit::test_context(pool.clone())),
     });
 
     // standard expression: fico band string

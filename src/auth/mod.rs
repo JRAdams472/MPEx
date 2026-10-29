@@ -3,6 +3,7 @@
 //! Route enforcement lands in MPE-99 — this module ships machinery plus
 //! `/api/auth/whoami` as the end-to-end proof.
 
+mod gate;
 mod principal;
 mod roles;
 mod validator;
@@ -15,6 +16,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use sqlx::PgPool;
 
+pub use gate::role_gate;
 pub use principal::Principal;
 pub use roles::{Role, RoleResolver};
 pub use validator::{AuthError, JwtValidator, TokenClaims};

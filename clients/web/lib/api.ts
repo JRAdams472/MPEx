@@ -1,7 +1,17 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+// Same-origin BFF — the access token lives in an httpOnly cookie and the
+// /bff route attaches it server-side. A 401 means the session is gone:
+// bounce through the login flow rather than surfacing a raw error.
+const BFF = "/bff";
+
+function bounceOn401(res: Response) {
+  if (res.status === 401 && typeof window !== "undefined") {
+    window.location.assign(`/auth/login?next=${encodeURIComponent(window.location.pathname)}`);
+  }
+}
 
 export async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`);
+  const res = await fetch(`${BFF}${path}`);
+  bounceOn401(res);
   if (!res.ok) {
     throw new Error(`API ${path} failed: ${res.status}`);
   }
@@ -13,11 +23,12 @@ async function apiWrite<T>(
   path: string,
   body?: unknown,
 ): Promise<{ status: number; data: T }> {
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${BFF}${path}`, {
     method,
     headers: { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  bounceOn401(res);
   const data = (await res.json().catch(() => ({}))) as T;
   return { status: res.status, data };
 }

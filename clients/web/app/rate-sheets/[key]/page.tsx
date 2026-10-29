@@ -29,11 +29,13 @@ import {
   type GridValue,
 } from "@/lib/specs";
 import StatusChip from "@/components/StatusChip";
+import { useMe } from "@/lib/me";
 
 export default function RateSheetDetailPage() {
   const { key: rawKey } = useParams<{ key: string }>();
   const key = decodeURIComponent(rawKey);
   const queryClient = useQueryClient();
+  const { canEdit } = useMe();
 
   const { data, error, isLoading } = useQuery({
     queryKey: ["rateSheet", key],
@@ -174,22 +176,26 @@ export default function RateSheetDetailPage() {
           status={data.draft ? "draft" : "published"}
           hasPublished={Boolean(data.published)}
         />
-        <Button
-          variant="contained"
-          size="small"
-          disabled={!dirty || save.isPending}
-          onClick={() => save.mutate()}
-        >
-          Save draft
-        </Button>
-        <Button
-          size="small"
-          color="error"
-          disabled={!data.draft || remove.isPending}
-          onClick={() => remove.mutate()}
-        >
-          Delete draft
-        </Button>
+        {canEdit && (
+          <>
+            <Button
+              variant="contained"
+              size="small"
+              disabled={!dirty || save.isPending}
+              onClick={() => save.mutate()}
+            >
+              Save draft
+            </Button>
+            <Button
+              size="small"
+              color="error"
+              disabled={!data.draft || remove.isPending}
+              onClick={() => remove.mutate()}
+            >
+              Delete draft
+            </Button>
+          </>
+        )}
       </Box>
       {saveError && (
         <Alert severity="error" sx={{ mb: 2 }}>

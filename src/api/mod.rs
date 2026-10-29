@@ -8,13 +8,14 @@ mod publications;
 mod rate_sheets;
 
 use axum::extract::State;
-use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::routing::{get, post, put};
+use axum::{middleware, Json, Router};
 use std::sync::Arc;
 
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
+use crate::auth::{role_gate, Role};
 use crate::error::AppError;
 use crate::rules::snapshot::SnapshotStore;
 
@@ -37,58 +38,94 @@ fn parse_admin_as_of(
 pub struct AppState {
     pub pool: PgPool,
     pub snapshots: Arc<SnapshotStore>,
-    /// OIDC context — `None` keeps the API runnable without an IdP;
-    /// auth extractors then reject with an error (enforcement lands in
-    /// MPE-99 alongside per-route role gates).
+    /// OIDC context — `None` keeps the API runnable without an IdP, but
+    /// every gated route then rejects (no auth bypass: dev runs dex).
     pub auth: Option<Arc<crate::auth::AuthContext>>,
 }
 
+/// Role buckets — each merged sub-router carries its own gate layer.
+/// `Service` is standalone: it may evaluate + list products and nothing
+/// else (it can't even reach viewer routes — `has` is hierarchical, not
+/// a superset).
+const EVAL_OR_PRODUCTS: &[Role] = &[Role::Viewer, Role::Service];
+const VIEWER: &[Role] = &[Role::Viewer];
+const PRICER: &[Role] = &[Role::Pricer];
+const ADMIN: &[Role] = &[Role::Admin];
+
 pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/healthz", get(healthz))
-        .route("/api/health", get(health))
-        .route("/api/products", get(products::list))
-        .route("/api/auth/whoami", get(auth::whoami))
+    // Authenticated callers (viewer+ or service): evaluation + products.
+    let eval = Router::new()
         .route("/api/evaluate/eligibility", post(evaluate::eligibility))
         .route("/api/evaluate/pricing", post(evaluate::pricing))
+        .route("/api/products", get(products::list))
+        .route_layer(middleware::from_fn_with_state(
+            (state.clone(), EVAL_OR_PRODUCTS),
+            role_gate,
+        ));
+
+    // viewer+ routes: validation/simulation and every admin GET.
+    let viewer = Router::new()
         .route(
             "/api/validate/expression",
             post(evaluate::validate_expression),
         )
+        .route("/api/simulate/matrix", post(matrices::simulate))
         .route("/api/decisions", get(decisions::list))
+        .route("/api/decisions/{key}", get(decisions::get))
+        .route("/api/expressions", get(expressions::list))
+        .route("/api/expressions/{key}", get(expressions::get))
+        .route("/api/matrices", get(matrices::list))
+        .route("/api/matrices/{key}", get(matrices::get))
+        .route("/api/rate-sheets", get(rate_sheets::list))
+        .route("/api/rate-sheets/{key}", get(rate_sheets::get))
+        .route("/api/publications", get(publications::list))
+        .route("/api/publications/{id}", get(publications::get))
+        .route_layer(middleware::from_fn_with_state(
+            (state.clone(), VIEWER),
+            role_gate,
+        ));
+
+    // pricer+ artifact mutations (GETs on the same paths stay viewer+).
+    let pricer = Router::new()
         .route(
             "/api/decisions/{key}",
-            get(decisions::get)
-                .put(decisions::put)
-                .delete(decisions::delete),
+            put(decisions::put).delete(decisions::delete),
         )
-        .route("/api/expressions", get(expressions::list))
         .route(
             "/api/expressions/{key}",
-            get(expressions::get)
-                .put(expressions::put)
-                .delete(expressions::delete),
+            put(expressions::put).delete(expressions::delete),
         )
-        .route("/api/matrices", get(matrices::list))
         .route(
             "/api/matrices/{key}",
-            get(matrices::get)
-                .put(matrices::put)
-                .delete(matrices::delete),
+            put(matrices::put).delete(matrices::delete),
         )
-        .route("/api/simulate/matrix", post(matrices::simulate))
-        .route("/api/rate-sheets", get(rate_sheets::list))
         .route(
             "/api/rate-sheets/{key}",
-            get(rate_sheets::get)
-                .put(rate_sheets::put)
-                .delete(rate_sheets::delete),
+            put(rate_sheets::put).delete(rate_sheets::delete),
         )
-        .route(
-            "/api/publications",
-            get(publications::list).post(publications::create),
-        )
-        .route("/api/publications/{id}", get(publications::get))
+        .route_layer(middleware::from_fn_with_state(
+            (state.clone(), PRICER),
+            role_gate,
+        ));
+
+    // admin-only: publishing stamps every changed draft.
+    let admin = Router::new()
+        .route("/api/publications", post(publications::create))
+        .route_layer(middleware::from_fn_with_state(
+            (state.clone(), ADMIN),
+            role_gate,
+        ));
+
+    Router::new()
+        .route("/healthz", get(healthz))
+        .route("/api/health", get(health))
+        // whoami authenticates via its own extractor — any valid token,
+        // including zero-role principals.
+        .route("/api/auth/whoami", get(auth::whoami))
+        .merge(eval)
+        .merge(viewer)
+        .merge(pricer)
+        .merge(admin)
         .with_state(state)
 }
 

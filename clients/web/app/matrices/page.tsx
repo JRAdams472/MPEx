@@ -1,30 +1,55 @@
 "use client";
 
 import Typography from "@mui/material/Typography";
+
 import Paper from "@mui/material/Paper";
+
 import Table from "@mui/material/Table";
+
 import TableBody from "@mui/material/TableBody";
+
 import TableCell from "@mui/material/TableCell";
+
 import TableContainer from "@mui/material/TableContainer";
+
 import TableHead from "@mui/material/TableHead";
+
 import TableRow from "@mui/material/TableRow";
+
 import Chip from "@mui/material/Chip";
+
 import Alert from "@mui/material/Alert";
+
 import Button from "@mui/material/Button";
+
 import Dialog from "@mui/material/Dialog";
+
 import DialogTitle from "@mui/material/DialogTitle";
+
 import DialogContent from "@mui/material/DialogContent";
+
 import DialogActions from "@mui/material/DialogActions";
+
 import TextField from "@mui/material/TextField";
+
 import MenuItem from "@mui/material/MenuItem";
+
 import Box from "@mui/material/Box";
+
 import Link from "next/link";
+
 import { useRouter } from "next/navigation";
+
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+
 import { useState } from "react";
 
+
 import { endpoints } from "@/lib/api";
+
 import StatusChip from "@/components/StatusChip";
+import { useMe } from "@/lib/me";
+
 
 const KINDS = ["llpa", "eligibility", "pricing", "shared"];
 
@@ -38,6 +63,7 @@ const STARTER_SPEC = {
 export default function MatricesPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { canEdit } = useMe();
   const { data, isLoading, error } = useQuery({
     queryKey: ["matrices"],
     queryFn: () => endpoints.matrices(),
@@ -74,9 +100,11 @@ export default function MatricesPage() {
         <Typography variant="h4" component="h1" sx={{ flexGrow: 1 }}>
           Matrices
         </Typography>
-        <Button variant="contained" size="small" onClick={() => setOpen(true)}>
-          New matrix
-        </Button>
+        {canEdit && (
+          <Button variant="contained" size="small" onClick={() => setOpen(true)}>
+            New matrix
+          </Button>
+        )}
       </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Row×column adjustment grids — each populated cell applies when its row

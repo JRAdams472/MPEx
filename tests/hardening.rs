@@ -16,6 +16,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use mpex::api::{self, AppState};
+use mpex::auth::testkit;
 use mpex::rules::snapshot::SnapshotStore;
 
 /// Serializes each test's full body: cleanup → draft PUTs → publish → eval
@@ -49,7 +50,7 @@ fn make_app(pool: &PgPool) -> Router {
     api::router(AppState {
         pool: pool.clone(),
         snapshots: Arc::new(SnapshotStore::new(pool.clone())),
-        auth: None,
+        auth: Some(testkit::test_context(pool.clone())),
     })
 }
 
@@ -58,6 +59,10 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
         .method(method)
         .uri(uri)
         .header("content-type", "application/json")
+        .header(
+            "authorization",
+            format!("Bearer {}", testkit::admin_token()),
+        )
         .body(match body {
             Some(b) => Body::from(serde_json::to_vec(&b).unwrap()),
             None => Body::empty(),
@@ -203,6 +208,7 @@ async fn determinism_and_memoization() {
     };
     let pool = PgPool::connect(&url).await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    testkit::ensure_grants(&pool).await;
     let _guard = SEED_LOCK.lock().await;
     cleanup(&pool, &DET).await;
     let app = seed(&pool, &DET).await;
@@ -244,6 +250,7 @@ async fn concurrent_evals_are_consistent() {
     };
     let pool = PgPool::connect(&url).await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    testkit::ensure_grants(&pool).await;
     let _guard = SEED_LOCK.lock().await;
     cleanup(&pool, &CON).await;
     let app = seed(&pool, &CON).await;
@@ -272,6 +279,10 @@ async fn concurrent_evals_are_consistent() {
                 .method("POST")
                 .uri(uri)
                 .header("content-type", "application/json")
+                .header(
+                    "authorization",
+                    format!("Bearer {}", testkit::admin_token()),
+                )
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
                 .unwrap();
             let res = app.oneshot(req).await.unwrap();
