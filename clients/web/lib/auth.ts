@@ -16,8 +16,9 @@ export const CLIENT_ID = process.env.OIDC_CLIENT_ID ?? "mpex-web";
 export const REDIRECT_URI =
   process.env.OIDC_REDIRECT_URI ?? "http://localhost:3000/auth/callback";
 const SECURE = process.env.SESSION_SECURE === "1";
-const SECRET =
-  process.env.SESSION_SECRET ?? "mpex-dev-session-secret-change-me";
+// No fallback: a compiled-in default would let anyone forge session JWEs.
+// Evaluated lazily so `next build` (which imports this module) never throws.
+const SECRET = process.env.SESSION_SECRET;
 
 const SESSION_COOKIE = "mpex_session";
 const PKCE_COOKIE = "mpex_pkce";
@@ -25,7 +26,14 @@ const STATE_COOKIE = "mpex_state";
 /** Refresh this far before the access-token exp, ms. */
 const REFRESH_MARGIN = 30_000;
 
-const key = createHash("sha256").update(SECRET).digest();
+function sessionKey(): Buffer {
+  if (!SECRET) {
+    throw new Error(
+      "SESSION_SECRET is required — set it in .env / clients/web/.env.local (docs/security.md)",
+    );
+  }
+  return createHash("sha256").update(SECRET).digest();
+}
 
 export interface SessionData {
   /** access token — the bearer for API calls */
@@ -124,7 +132,7 @@ async function setSession(s: SessionData) {
   const sealed = await new EncryptJWT(s as unknown as Record<string, unknown>)
     .setProtectedHeader({ alg: "dir", enc: "A256GCM" })
     .setIssuedAt()
-    .encrypt(key);
+    .encrypt(sessionKey());
   (await cookies()).set(SESSION_COOKIE, sealed, {
     ...cookieOpts,
     maxAge: 60 * 60 * 12,
@@ -145,7 +153,7 @@ export async function getSession(): Promise<SessionData | null> {
   if (!raw) return null;
   let s: SessionData;
   try {
-    s = (await jwtDecrypt(raw, key)).payload as unknown as SessionData;
+    s = (await jwtDecrypt(raw, sessionKey())).payload as unknown as SessionData;
   } catch {
     return null;
   }

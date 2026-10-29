@@ -1,0 +1,84 @@
+# Security runbook
+
+MPE-97 hardening: OIDC authN/Z, hash-chained audit, secret hygiene, transport
+baselines. This doc is the operator-facing half — how to configure it per
+environment and rotate what rotates.
+
+## Secrets
+
+Tracked files contain **no secret values** — `docker-compose.yml` interpolates
+`${VAR:?}` from `.env` (gitignored), and `.env.example` ships placeholders
+only. Compose fails closed on any unset secret.
+
+| Secret | Used by | Notes |
+|---|---|---|
+| `POSTGRES_PASSWORD` | `db`, `api` (`DATABASE_URL`) | Any strong value; db creates the role on first boot. |
+| `DEX_MPEX_SVC_SECRET` | `dex` (client `mpex-svc`) | Service-token client secret. |
+| `DEX_MPEX_CI_SECRET` | `dex` (client `mpex-ci`) | CI/automation client secret. |
+| `SESSION_SECRET` | `web` | JWE key for `mpex_session` cookies — `openssl rand -hex 32`. |
+| `SEQ_ADMIN_PASSWORD_HASH` | `seq` | First-boot admin seed (`SEQ_FIRSTRUN_*`) — salted hash, not plaintext: `echo 'pw' \| docker run --rm -i datalust/seq config hash`. |
+| `SEQ_API_KEY` | `api` | Seq ingest key, `x-seq-apikey` header. Create after first boot. |
+
+- **Local dev**: `cp .env.example .env`, fill values, `docker compose up --build`.
+- **CI**: generates all secrets per run (`openssl rand -hex`) — nothing static
+  in `ci.yml` either.
+- **Production**: inject via your secret manager (k8s secrets, SSM, Vault) as
+  env vars — same names. Never bake into images or files.
+
+## TLS
+
+| Env | Termination |
+|---|---|
+| **dev** | Plain HTTP on loopback only (`localhost`). No TLS — nothing leaves the host. |
+| **prod** | TLS at the reverse proxy / ingress (nginx, ALB, Traefik). API and web stay HTTP behind it. Set `SESSION_SECURE=1` (Secure cookies), point `CORS_ORIGIN`/`OIDC_ISSUER`/`OIDC_REDIRECT_URI`/`SEQ_URL` at `https://` endpoints. |
+
+- **HSTS** belongs at the terminator — set `Strict-Transport-Security:
+  max-age=31536000; includeSubDomains` in the proxy config, not in the app
+  (browsers ignore it over HTTP anyway).
+- Internal hops (api→dex JWKS, api→seq, web→api) ride the private network;
+  put them on TLS too if the network isn't trusted.
+
+## OIDC
+
+Dev runs Dex (`dex/config.dev.yaml`) — auth-code+PKCE for the UI
+(`mpex-web`, public client), client-credentials for machines (`mpex-svc`,
+`mpex-ci`; requires dex ≥ v2.46.0 for `clientCredentialsEnabled`). Production
+repoints `OIDC_ISSUER`/`OIDC_JWKS_URL` at the real IdP — no code changes.
+
+- `OIDC_AUDIENCE` = comma-separated **client IDs**, not a resource indicator —
+  Dex stamps `aud` with the client_id. List every registered client that may
+  call the API.
+- Roles resolve from `role_grants`: humans by `email`, machines by `aud`
+  (client_id), plus `sub`. Seed file `seed/002_dev_principals.sql` is the dev
+  example; grant admin-only via migrations or direct admin tooling.
+
+## Seq ingestion
+
+`SEQ_FIRSTRUN_REQUIREAUTHENTICATIONFORHTTPINGESTION=true` rejects
+unauthenticated ingest from first boot. Provision the ingest key once:
+
+```sh
+docker exec mpex-seq-1 seqcli apikey create -t mpex-ingest \
+  --connect-username admin --connect-password '<admin-password>' --json
+# → prints {"Token":"..."} — put it in .env as SEQ_API_KEY
+```
+
+(API keys are also creatable in the UI under Settings → API keys.)
+
+## Rotation
+
+| What | How |
+|---|---|
+| `DEX_MPEX_*_SECRET` | Update `.env`, `docker compose up -d dex`; outstanding tokens die at `exp` — mint fresh ones. |
+| `SESSION_SECRET` | Update + restart `web`. Invalidates every session cookie — users re-login. |
+| `POSTGRES_PASSWORD` | `ALTER ROLE mpex WITH PASSWORD '…'`, update `.env`, recreate `api`/`db`. |
+| `SEQ_API_KEY` | Create a new key, update `.env`, restart `api`, revoke the old key in Seq. |
+| OIDC signing keys | IdP-side rotation only — the validator refreshes JWKS automatically on unknown `kid`. |
+| Dex user passwords | `dex/config.dev.yaml` holds bcrypt hashes — regenerate with a bcrypt tool and restart dex (dev only). |
+
+## Audit
+
+`audit_events` is append-only (storage-level trigger) and hash-chained;
+`GET /api/audit/verify` (admin) recomputes the chain — run it after restores
+or suspected tampering. `auth.denied` rows record 403s; 401s are log-only
+by design (audit rows for bad tokens are a DoS vector).

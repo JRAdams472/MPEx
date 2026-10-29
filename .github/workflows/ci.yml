@@ -14,14 +14,14 @@ jobs:
         image: postgres:18-alpine
         env:
           POSTGRES_USER: mpex
-          POSTGRES_PASSWORD: mpex
+          POSTGRES_PASSWORD: pg-${{ github.run_id }}-${{ github.run_attempt }}
           POSTGRES_DB: mpex
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U mpex -d mpex"
           --health-interval 5s --health-timeout 3s --health-retries 12
     env:
-      DATABASE_URL: postgres://mpex:mpex@localhost:5432/mpex
+      DATABASE_URL: postgres://mpex:pg-${{ github.run_id }}-${{ github.run_attempt }}@localhost:5432/mpex
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -59,14 +59,14 @@ jobs:
         image: postgres:18-alpine
         env:
           POSTGRES_USER: mpex
-          POSTGRES_PASSWORD: mpex
+          POSTGRES_PASSWORD: pg-${{ github.run_id }}-${{ github.run_attempt }}
           POSTGRES_DB: mpex
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U mpex -d mpex"
           --health-interval 5s --health-timeout 3s --health-retries 12
     env:
-      DATABASE_URL: postgres://mpex:mpex@localhost:5432/mpex
+      DATABASE_URL: postgres://mpex:pg-${{ github.run_id }}-${{ github.run_attempt }}@localhost:5432/mpex
       # Baked into the client bundle at `next build` time.
       NEXT_PUBLIC_API_URL: http://localhost:8080
     steps:
@@ -76,10 +76,16 @@ jobs:
       - run: cargo build
       - name: Start Dex (dev IdP)
         run: |
+          # Client secrets are generated per run — no static secret values
+          # live in tracked files. Exported for the seed step below.
+          SVC_SECRET=$(openssl rand -hex 16)
+          CI_SECRET=$(openssl rand -hex 16)
+          echo "DEX_MPEX_SVC_SECRET=$SVC_SECRET" >> "$GITHUB_ENV"
+          echo "DEX_MPEX_CI_SECRET=$CI_SECRET" >> "$GITHUB_ENV"
           docker run -d --name dex -p 5556:5556 \
             -v "$PWD/dex/config.dev.yaml:/etc/dex/config.yaml" \
-            -e DEX_MPEX_SVC_SECRET=mpex-svc-dev-secret \
-            -e DEX_MPEX_CI_SECRET=mpex-ci-dev-secret \
+            -e "DEX_MPEX_SVC_SECRET=$SVC_SECRET" \
+            -e "DEX_MPEX_CI_SECRET=$CI_SECRET" \
             dexidp/dex:v2.46.0 dex serve /etc/dex/config.yaml
           for i in $(seq 1 30); do
             curl -sf http://localhost:5556/dex/.well-known/openid-configuration >/dev/null && exit 0 || sleep 1
@@ -102,7 +108,7 @@ jobs:
       - name: Seed demo artifacts + publish
         run: |
           TOKEN=$(curl -sf -X POST http://localhost:5556/dex/token \
-            -u mpex-ci:mpex-ci-dev-secret \
+            -u "mpex-ci:$DEX_MPEX_CI_SECRET" \
             -d "grant_type=client_credentials&scope=openid" | jq -r .access_token)
           curl -sf -X PUT http://localhost:8080/api/matrices/llpa.fico-ltv \
             -H "authorization: Bearer $TOKEN" \
@@ -150,7 +156,7 @@ jobs:
           OIDC_TOKEN_URL: http://localhost:5556/dex/token
           OIDC_CLIENT_ID: mpex-web
           OIDC_REDIRECT_URI: http://localhost:3000/auth/callback
-          SESSION_SECRET: e2e-session-secret
+          SESSION_SECRET: e2e-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           npm start &
           for i in $(seq 1 60); do

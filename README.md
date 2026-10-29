@@ -37,11 +37,15 @@ mortgage product eligibility and pricing. Rules are metadata-driven and executed
 ## Getting started
 
 ```bash
+cp .env.example .env             # then fill in the secret values (see docs/security.md)
 docker compose up --build        # db + api + web
 # or, API only (hot reload):
 docker compose up db -d
 cargo run
 ```
+
+Compose interpolates secrets from `.env` and refuses to start without them;
+`.env` is gitignored — never commit it.
 
 Web UI: http://localhost:3000 · API: http://localhost:8080 (`/healthz`, `/api/health`).
 
@@ -55,7 +59,7 @@ the env flags are set — compose wires them for you:
 |---|---|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Trace spans → OTLP/gRPC (compose: `http://jaeger:4317`) |
 | `SEQ_URL` | `tracing` events → OTLP logs — full `v1/logs` path (compose: `http://seq/ingest/otlp/v1/logs`) |
-| `SEQ_API_KEY` | Optional `x-seq-apikey` header for Seq ingest auth |
+| `SEQ_API_KEY` | `x-seq-apikey` header — required by the Seq container's ingest auth |
 | `OTEL_SERVICE_NAME` | Resource `service.name` (default `mpex-api`) |
 
 Unset = stdout JSON only (`docker logs mpex-api-1` keeps working either way).

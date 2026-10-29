@@ -8,7 +8,10 @@ mod products;
 mod publications;
 mod rate_sheets;
 
-use axum::extract::State;
+use axum::extract::{Request, State};
+use axum::http::{header, HeaderValue};
+use axum::middleware::Next;
+use axum::response::Response;
 use axum::routing::{get, post, put};
 use axum::{middleware, Json, Router};
 use std::sync::Arc;
@@ -130,7 +133,31 @@ pub fn router(state: AppState) -> Router {
         .merge(viewer)
         .merge(pricer)
         .merge(admin)
+        .layer(middleware::from_fn(security_headers))
         .with_state(state)
+}
+
+/// Baseline response hardening on every response, including gate rejections
+/// and health checks. The API serves JSON only, so the CSP is a deny-all
+/// document policy that also kills framing (`frame-ancestors` covers the
+/// `X-Frame-Options` gaps in modern browsers).
+async fn security_headers(req: Request, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    let h = res.headers_mut();
+    h.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    h.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    h.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("default-src 'self'; frame-ancestors 'none'"),
+    );
+    res
 }
 
 async fn healthz() -> Json<Value> {

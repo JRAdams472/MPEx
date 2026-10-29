@@ -96,12 +96,14 @@ async fn live_api_smoke() {
     };
     let client = reqwest::Client::new();
     // Eval routes require auth: mint a service token via client-credentials
-    // when the IdP env is provided (dev defaults match docker-compose dex).
+    // (dev defaults for URL/client-id match the compose dex).
     let token_url = std::env::var("MPEX_TOKEN_URL")
         .unwrap_or_else(|_| "http://localhost:5556/dex/token".into());
     let client_id = std::env::var("MPEX_CLIENT_ID").unwrap_or_else(|_| "mpex-svc".into());
+    // No dev-secret default — secrets never live in tracked files. The live
+    // smoke test is opt-in, so requiring the env is the right failure mode.
     let client_secret =
-        std::env::var("MPEX_CLIENT_SECRET").unwrap_or_else(|_| "mpex-svc-dev-secret".into());
+        std::env::var("MPEX_CLIENT_SECRET").expect("MPEX_CLIENT_SECRET is required for live smoke");
     let token: String = client
         .post(&token_url)
         .basic_auth(client_id, Some(client_secret))
