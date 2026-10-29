@@ -110,10 +110,12 @@ pub struct PublishRequest {
 /// publish — empty publications are never stamped.
 pub async fn create(
     State(state): State<AppState>,
+    principal: crate::auth::Principal,
     Json(req): Json<PublishRequest>,
 ) -> Result<(StatusCode, Json<Value>), AppError> {
     let label = req.label.unwrap_or_default();
-    let publication = publish::publish(&state.pool, &label).await?;
+    let publication =
+        publish::publish(&state.pool, &label, crate::audit::Actor::from(&principal)).await?;
     Ok((
         StatusCode::CREATED,
         Json(serde_json::to_value(publication).unwrap_or_default()),

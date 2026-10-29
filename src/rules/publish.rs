@@ -38,7 +38,11 @@ pub struct Publication {
         rate_sheets = tracing::field::Empty
     )
 )]
-pub async fn publish(pool: &PgPool, label: &str) -> Result<Publication, AppError> {
+pub async fn publish(
+    pool: &PgPool,
+    label: &str,
+    actor: crate::audit::Actor,
+) -> Result<Publication, AppError> {
     let label = label.trim();
     if label.is_empty() {
         return Err(AppError::BadRequest("publication label is required".into()));
@@ -159,6 +163,26 @@ pub async fn publish(pool: &PgPool, label: &str) -> Result<Publication, AppError
         // Rolling back drops the publication row too — no empty snapshots.
         return Err(AppError::Conflict("no draft changes to publish".into()));
     }
+
+    // Inside the same tx: a rollback (e.g. the empty-publish 409 above) leaves
+    // no audit row, and a committed publication is always attributed.
+    crate::audit::record(
+        &mut tx,
+        actor,
+        crate::audit::Event {
+            action: crate::audit::action::PUBLICATION_CREATE,
+            artifact_table: Some("publications"),
+            artifact_key: Some(id.to_string()),
+            detail: serde_json::json!({
+                "label": label,
+                "decisionCount": decisions.len(),
+                "expressionCount": expressions.len(),
+                "matrixCount": matrices.len(),
+                "rateSheetCount": rate_sheets.len(),
+            }),
+        },
+    )
+    .await?;
 
     tx.commit().await?;
     tracing::Span::current()
