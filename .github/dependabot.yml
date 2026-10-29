@@ -1,0 +1,40 @@
+version: 2
+updates:
+  # Rust — Cargo.toml + Cargo.lock at the repo root.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for compatible bumps; majors still open individually.
+      rust-minor-patch:
+        update-types: [minor, patch]
+
+  # Web client — package.json + package-lock.json.
+  - package-ecosystem: npm
+    directory: /clients/web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+
+  # Workflow actions (actions/*, gitleaks-action, audit-check, ...).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # Base images in the root and web Dockerfiles.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /clients/web
+    schedule:
+      interval: weekly
