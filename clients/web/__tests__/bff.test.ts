@@ -20,8 +20,6 @@ function req(body?: BodyInit, headers?: Record<string, string>) {
     method: "POST",
     headers,
     body: body ?? null,
-    // @ts-expect-error — required for streaming request bodies
-    duplex: "half",
   });
 }
 
