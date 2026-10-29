@@ -217,6 +217,7 @@ async fn matrix_publish_lifecycle() {
         pool: pool.clone(),
         snapshots: snapshots.clone(),
         auth: Some(testkit::test_context(pool.clone())),
+        rate_limits: None,
     });
 
     // --- Draft CRUD + simulate ----------------------------------------------

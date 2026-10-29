@@ -51,6 +51,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 zen-engine = "2"
 zen-expression = "2"
+governor = { version = "0.10.4", features = ["dashmap"] }
 
 [dev-dependencies]
 base64 = "0.22"

@@ -47,6 +47,7 @@ pub async fn publish(
     if label.is_empty() {
         return Err(AppError::BadRequest("publication label is required".into()));
     }
+    crate::api::validate::validate_label(label)?;
 
     let mut tx = pool.begin().await?;
     let (id, published_at): (Uuid, DateTime<Utc>) =

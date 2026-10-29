@@ -21,6 +21,12 @@ pub enum AppError {
     #[error("forbidden: {0}")]
     Forbidden(String),
 
+    #[error("rate limited ({bucket} bucket): retry in {retry_after}s")]
+    TooManyRequests {
+        bucket: &'static str,
+        retry_after: u64,
+    },
+
     #[error(transparent)]
     Db(#[from] sqlx::Error),
 
@@ -36,6 +42,24 @@ impl IntoResponse for AppError {
             AppError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
             AppError::Unauthorized(m) => (StatusCode::UNAUTHORIZED, m.clone()),
             AppError::Forbidden(m) => (StatusCode::FORBIDDEN, m.clone()),
+            AppError::TooManyRequests {
+                bucket,
+                retry_after,
+            } => {
+                let mut res = (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(json!({
+                        "error": format!("rate limited ({bucket} bucket)"),
+                        "retryAfter": retry_after,
+                    })),
+                )
+                    .into_response();
+                res.headers_mut().insert(
+                    axum::http::header::RETRY_AFTER,
+                    axum::http::HeaderValue::from(*retry_after),
+                );
+                return res;
+            }
             AppError::Db(e) => {
                 tracing::error!(error = %e, "database error");
                 (

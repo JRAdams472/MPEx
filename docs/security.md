@@ -76,6 +76,20 @@ docker exec mpex-seq-1 seqcli apikey create -t mpex-ingest \
 | OIDC signing keys | IdP-side rotation only — the validator refreshes JWKS automatically on unknown `kid`. |
 | Dex user passwords | `dex/config.dev.yaml` holds bcrypt hashes — regenerate with a bcrypt tool and restart dex (dev only). |
 
+## Edge hardening
+
+- **Rate limits** (per-IP, token bucket): global `RATE_LIMIT_PER_MIN` (default
+  120/min) on every request; mutation tier `RATE_LIMIT_MUTATIONS_PER_MIN`
+  (default 30/min) on PUT/DELETE and `POST /api/publications` — eval/simulate
+  POSTs stay on the global tier. 429s carry `Retry-After`.
+- **Client IP**: peer address via `ConnectInfo` by default. Behind a proxy,
+  set `RATE_LIMIT_TRUST_XFF=1` to key on `X-Forwarded-For` — **only** when the
+  proxy overwrites the header, or clients can reset their own bucket.
+- **Body cap**: 2 MiB (`DefaultBodyLimit`) → 413. Semantic caps inside it:
+  `{key}` `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`, publication label ≤ 200 chars,
+  expression ≤ 64 KiB, serialized spec/jdm ≤ 1 MiB.
+- `RATE_LIMIT_DISABLE=1` turns limits off (local dev escape hatch — never prod).
+
 ## Audit
 
 `audit_events` is append-only (storage-level trigger) and hash-chained;

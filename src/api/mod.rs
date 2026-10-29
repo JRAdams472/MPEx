@@ -7,6 +7,7 @@ mod matrices;
 mod products;
 mod publications;
 mod rate_sheets;
+pub(crate) mod validate;
 
 use axum::extract::{Request, State};
 use axum::http::{header, HeaderValue};
@@ -45,6 +46,10 @@ pub struct AppState {
     /// OIDC context — `None` keeps the API runnable without an IdP, but
     /// every gated route then rejects (no auth bypass: dev runs dex).
     pub auth: Option<Arc<crate::auth::AuthContext>>,
+    /// Per-IP rate limits — `None` in tests (no throttling); `main` fills
+    /// it from env. Applied *inside* `security_headers` so 429s carry the
+    /// header baseline too.
+    pub rate_limits: Option<Arc<crate::limits::EdgeLimits>>,
 }
 
 /// Role buckets — each merged sub-router carries its own gate layer.
@@ -123,7 +128,7 @@ pub fn router(state: AppState) -> Router {
             role_gate,
         ));
 
-    Router::new()
+    let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/api/health", get(health))
         // whoami authenticates via its own extractor — any valid token,
@@ -132,8 +137,21 @@ pub fn router(state: AppState) -> Router {
         .merge(eval)
         .merge(viewer)
         .merge(pricer)
-        .merge(admin)
-        .layer(middleware::from_fn(security_headers))
+        .merge(admin);
+
+    // Rate limits sit inside the headers layer so 429s carry them too.
+    let app = match &state.rate_limits {
+        Some(l) => app.layer(middleware::from_fn_with_state(
+            l.clone(),
+            crate::limits::edge_limit,
+        )),
+        None => app,
+    };
+
+    app.layer(middleware::from_fn(security_headers))
+        // Hard ceiling on request bodies; semantic caps in `validate` are
+        // the finer bounds inside it.
+        .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024))
         .with_state(state)
 }
 

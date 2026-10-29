@@ -131,6 +131,7 @@ pub async fn get(
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> Result<Json<Value>, AppError> {
+    super::validate::validate_key(&key)?;
     let draft = sqlx::query_as::<_, MatrixRow>(&format!(
         "SELECT {ROW_COLS} FROM matrices WHERE key = $1 AND status = 'draft'"
     ))
@@ -193,6 +194,11 @@ pub async fn put(
     Path(key): Path<String>,
     Json(req): Json<UpsertMatrix>,
 ) -> Result<Json<Value>, AppError> {
+    super::validate::validate_key(&key)?;
+    super::validate::validate_spec_size(&req.spec, "spec")?;
+    if let Some(code) = &req.product_code {
+        super::validate::validate_key(code)?;
+    }
     let kind = req.kind.unwrap_or_else(|| "llpa".into());
     if !super::decisions::KINDS.contains(&kind.as_str()) {
         return Err(AppError::BadRequest(format!(
@@ -257,6 +263,7 @@ pub async fn delete(
     principal: crate::auth::Principal,
     Path(key): Path<String>,
 ) -> Result<StatusCode, AppError> {
+    super::validate::validate_key(&key)?;
     let mut tx = state.pool.begin().await?;
     let n = sqlx::query("DELETE FROM matrices WHERE key = $1 AND status = 'draft'")
         .bind(&key)
