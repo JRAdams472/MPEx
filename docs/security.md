@@ -48,9 +48,15 @@ repoints `OIDC_ISSUER`/`OIDC_JWKS_URL` at the real IdP — no code changes.
 - `OIDC_AUDIENCE` = comma-separated **client IDs**, not a resource indicator —
   Dex stamps `aud` with the client_id. List every registered client that may
   call the API.
-- Roles resolve from `role_grants`: humans by `email`, machines by `aud`
+- Roles resolve from `role_grants` keyed by **typed** subject
+  (`subject_type` `sub`/`email`/`aud`): humans by `email`, machines by `aud`
   (client_id), plus `sub`. Seed file `seed/002_dev_principals.sql` is the dev
-  example; grant admin-only via migrations or direct admin tooling.
+  example. Grant and revoke without SQL via the admin-gated surface
+  (`GET`/`PUT /api/admin/grants`, `DELETE /api/admin/grants/{id}`); mutations
+  write attributed `grant.put`/`grant.delete` audit rows in-transaction,
+  take effect on the caller's next request on the same instance (other
+  replicas converge within ~60s), and refuse to revoke the caller's own
+  admin grant or the last remaining admin grant.
 
 ## Seq ingestion
 

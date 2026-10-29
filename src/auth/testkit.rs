@@ -96,9 +96,9 @@ pub const SUB_SVC: &str = "test-svc";
 /// with nothing real (test-namespaced subjects).
 pub async fn ensure_grants(pool: &PgPool) {
     sqlx::query(
-        "INSERT INTO role_grants (subject, role, granted_by) VALUES
-         ($1, 'viewer', 'testkit'), ($2, 'pricer', 'testkit'),
-         ($3, 'admin', 'testkit'), ($4, 'service', 'testkit')
+        "INSERT INTO role_grants (subject_type, subject, role, granted_by) VALUES
+         ('sub', $1, 'viewer', 'testkit'), ('sub', $2, 'pricer', 'testkit'),
+         ('sub', $3, 'admin', 'testkit'), ('sub', $4, 'service', 'testkit')
          ON CONFLICT DO NOTHING",
     )
     .bind(SUB_VIEWER)
