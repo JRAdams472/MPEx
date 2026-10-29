@@ -114,6 +114,29 @@ trigger inline — e.g. jdm-editor's `zod@3` pin has no stable fix and a zod@4
 override would break the editor (MPE-123); the exception is removed when
 upstream ships fixed transitives.
 
+## SonarQube (code quality)
+
+A `sonarqube` CI job boots an ephemeral `sonarqube:community` container in
+the run, scans the checkout (`sonar-project.properties` scopes sources/tests
+and holds durable suppressions), and enforces the quality gate via
+`sonar.qualitygate.wait=true`. Community Build's Rust analyzer covers `src/`
+natively; TypeScript/JS analysis is native; the Clippy sensor is skipped
+(cargo isn't on the scanner's PATH).
+
+Local parity: `docker compose -f docker-compose.sonarqube.yml up -d` (or
+reuse the LOLA instance on :9000 — projects are keyed `mpex` vs `lena2`),
+wait for `"status":"UP"` at `http://localhost:9000/api/system/status`, then:
+
+```sh
+docker run --rm -e SONAR_TOKEN=<ui-generated-token> \
+  -e SONAR_HOST_URL=http://host.docker.internal:9000 \
+  -v "$(pwd -W):/usr/src" sonarsource/sonar-scanner-cli
+```
+
+UI at `http://localhost:9000` (admin/admin on first boot). The `sonarqube`
+MCP server in `.devin/mcp_config.local.json` queries issues/hotspots/quality
+gate — point `SONARQUBE_TOKEN` at a token generated in the UI.
+
 ## Audit
 
 `audit_events` is append-only (storage-level trigger) and hash-chained;

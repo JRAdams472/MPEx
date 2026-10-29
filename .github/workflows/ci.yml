@@ -214,3 +214,50 @@ jobs:
           name: playwright-report
           path: clients/web/playwright-report
           retention-days: 7
+
+  sonarqube:
+    name: SonarQube — scan + quality gate
+    needs: [rust, web]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # blame + new-code detection need history
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: clients/web/package-lock.json
+      # Jest coverage feeds sonar.javascript.lcov.reportPaths.
+      - run: npm ci && npm test -- --ci --coverage
+        working-directory: clients/web
+      - name: Start SonarQube
+        # Ephemeral community-build instance inside the job — same pattern
+        # as the local docker-compose.sonarqube.yml overlay.
+        run: |
+          docker run -d --name sonarqube -p 9000:9000 \
+            -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
+            sonarqube:community
+          for i in $(seq 1 90); do
+            s=$(curl -sf http://localhost:9000/api/system/status | grep -o '"status":"[A-Z_]*"' | cut -d'"' -f4 || true)
+            [ "$s" = "UP" ] && exit 0
+            [ "$s" = "DOWN" -o "$s" = "DB_MIGRATION_NEEDED" ] && { docker logs sonarqube --tail 50; exit 1; }
+            sleep 4
+          done
+          docker logs sonarqube --tail 80; exit 1
+      - name: Scanner token + scan + quality gate
+        env:
+          # Default admin cred for the ephemeral in-CI instance only — the
+          # generated token dies with the container.
+          SONAR_ADMIN_CRED: admin:admin
+        run: |
+          token=$(curl -sf -u "$SONAR_ADMIN_CRED" \
+            -X POST http://localhost:9000/api/user_tokens/generate?name=ci \
+            | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+          [ -n "$token" ] || { echo "token generation failed"; exit 1; }
+          docker run --rm --network host \
+            -e SONAR_TOKEN=$token \
+            -e SONAR_HOST_URL=http://localhost:9000 \
+            -v "$PWD:/usr/src" \
+            sonarsource/sonar-scanner-cli \
+            -Dsonar.qualitygate.wait=true
