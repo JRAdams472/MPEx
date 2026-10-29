@@ -300,6 +300,7 @@ pub struct SimulateRequest {
 /// Editor preview: compiles the spec, evaluates it against `context`, and
 /// returns the result plus per-cell match detail for debugging.
 pub async fn simulate(Json(req): Json<SimulateRequest>) -> Result<Json<Value>, AppError> {
+    super::validate::validate_spec_size(&req.spec, "spec")?;
     let result = matrix::simulate(&req.spec, &req.context)
         .await
         .map_err(AppError::BadRequest)?;

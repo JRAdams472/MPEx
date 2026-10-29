@@ -175,6 +175,10 @@ async fn security_headers(req: Request, next: Next) -> Response {
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static("default-src 'self'; frame-ancestors 'none'"),
     );
+    h.insert(
+        header::HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=(), payment=()"),
+    );
     res
 }
 

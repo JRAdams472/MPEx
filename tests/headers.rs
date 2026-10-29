@@ -48,6 +48,10 @@ fn assert_headers(res: &axum::response::Response) {
         h["content-security-policy"],
         "default-src 'self'; frame-ancestors 'none'"
     );
+    assert_eq!(
+        h["permissions-policy"],
+        "camera=(), microphone=(), geolocation=(), payment=()"
+    );
 }
 
 #[tokio::test]

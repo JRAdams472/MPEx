@@ -12,4 +12,7 @@ test("document responses carry security headers", async ({ page }) => {
   expect(headers["x-content-type-options"]).toBe("nosniff");
   expect(headers["x-frame-options"]).toBe("DENY");
   expect(headers["referrer-policy"]).toBe("no-referrer");
+  expect(headers["permissions-policy"]).toBe(
+    "camera=(), microphone=(), geolocation=(), payment=()",
+  );
 });

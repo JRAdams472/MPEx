@@ -120,7 +120,10 @@ pub struct ValidateExpressionRequest {
     pub kind: Option<String>,
 }
 
-pub async fn validate_expression(Json(req): Json<ValidateExpressionRequest>) -> Json<Value> {
+pub async fn validate_expression(
+    Json(req): Json<ValidateExpressionRequest>,
+) -> Result<Json<Value>, AppError> {
+    super::validate::validate_expression_source(&req.expression)?;
     let result = match req.kind.as_deref() {
         Some("unary") => zen_expression::compile_unary_expression(&req.expression)
             .map(|_| ())
@@ -129,8 +132,8 @@ pub async fn validate_expression(Json(req): Json<ValidateExpressionRequest>) -> 
             .map(|_| ())
             .map_err(|e| e.to_string()),
     };
-    match result {
+    Ok(match result {
         Ok(()) => Json(json!({ "ok": true })),
         Err(error) => Json(json!({ "ok": false, "error": error })),
-    }
+    })
 }
