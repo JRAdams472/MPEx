@@ -55,5 +55,5 @@ governor = { version = "0.10.4", features = ["dashmap"] }
 regex = "1.13.1"
 
 [dev-dependencies]
-base64 = "0.22"
+base64 = "0.23"
 tower = { version = "0.5", features = ["util"] }
