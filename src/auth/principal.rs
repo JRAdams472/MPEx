@@ -32,22 +32,19 @@ impl Principal {
     pub fn has_any(&self, required: &[Role]) -> bool {
         required.iter().any(|&r| self.has(r))
     }
-}
 
-impl FromRequestParts<AppState> for Principal {
-    type Rejection = AppError;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
+    /// Bearer-token validation + role resolution, shared by the `role_gate`
+    /// middleware and the request extractor.
+    pub async fn authenticate(
         state: &AppState,
-    ) -> Result<Self, Self::Rejection> {
+        headers: &axum::http::HeaderMap,
+    ) -> Result<Self, AppError> {
         let Some(auth) = &state.auth else {
             return Err(AppError::Internal(anyhow::anyhow!(
                 "auth required but no OIDC context configured"
             )));
         };
-        let token = parts
-            .headers
+        let token = headers
             .get(AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|h| h.strip_prefix("Bearer "))
@@ -67,5 +64,21 @@ impl FromRequestParts<AppState> for Principal {
             email: claims.email,
             roles,
         })
+    }
+}
+
+impl FromRequestParts<AppState> for Principal {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        // The route-layer gate already authenticated this request — reuse
+        // the principal rather than re-validating the token.
+        if let Some(p) = parts.extensions.get::<Principal>() {
+            return Ok(p.clone());
+        }
+        Self::authenticate(state, &parts.headers).await
     }
 }

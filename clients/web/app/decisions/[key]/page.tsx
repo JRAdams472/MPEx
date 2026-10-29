@@ -21,6 +21,7 @@ import {
 } from "@/lib/api";
 import DecisionEditor from "@/components/DecisionEditor";
 import StatusChip from "@/components/StatusChip";
+import { useMe } from "@/lib/me";
 
 const SAMPLE_LOAN = `{
   "loan": { "ltv": 78.0, "amount": 320000, "termMonths": 360, "purpose": "purchase", "type": "conventional" },
@@ -33,6 +34,7 @@ export default function DecisionDetailPage() {
   const { key: rawKey } = useParams<{ key: string }>();
   const key = decodeURIComponent(rawKey);
   const queryClient = useQueryClient();
+  const { canEdit } = useMe();
 
   const { data, error, isLoading } = useQuery({
     queryKey: ["decision", key],
@@ -105,22 +107,26 @@ export default function DecisionDetailPage() {
           {key}
         </Typography>
         <StatusChip status={status} hasPublished={Boolean(data.published)} />
-        <Button
-          variant="contained"
-          size="small"
-          disabled={!dirty || save.isPending}
-          onClick={() => save.mutate()}
-        >
-          Save draft
-        </Button>
-        <Button
-          size="small"
-          color="error"
-          disabled={!data.draft || remove.isPending}
-          onClick={() => remove.mutate()}
-        >
-          Delete draft
-        </Button>
+        {canEdit && (
+          <>
+            <Button
+              variant="contained"
+              size="small"
+              disabled={!dirty || save.isPending}
+              onClick={() => save.mutate()}
+            >
+              Save draft
+            </Button>
+            <Button
+              size="small"
+              color="error"
+              disabled={!data.draft || remove.isPending}
+              onClick={() => remove.mutate()}
+            >
+              Delete draft
+            </Button>
+          </>
+        )}
       </Box>
       {saveError && (
         <Alert severity="error" sx={{ mb: 2 }}>

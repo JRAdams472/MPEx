@@ -129,6 +129,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use mpex::api::{self, AppState};
+use mpex::auth::testkit;
 use mpex::rules::loader::Revision;
 use mpex::rules::snapshot::SnapshotStore;
 
@@ -139,6 +140,10 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
         .method(method)
         .uri(uri)
         .header("content-type", "application/json")
+        .header(
+            "authorization",
+            format!("Bearer {}", testkit::admin_token()),
+        )
         .body(match body {
             Some(b) => Body::from(serde_json::to_vec(&b).unwrap()),
             None => Body::empty(),
@@ -186,6 +191,7 @@ async fn matrix_publish_lifecycle() {
     };
     let pool = PgPool::connect(&url).await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    testkit::ensure_grants(&pool).await;
 
     sqlx::query("DELETE FROM matrices WHERE key = $1")
         .bind(MATRIX_KEY)
@@ -210,7 +216,7 @@ async fn matrix_publish_lifecycle() {
     let app = api::router(AppState {
         pool: pool.clone(),
         snapshots: snapshots.clone(),
-        auth: None,
+        auth: Some(testkit::test_context(pool.clone())),
     });
 
     // --- Draft CRUD + simulate ----------------------------------------------

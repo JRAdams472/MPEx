@@ -25,13 +25,32 @@ fn make_app(pool: &PgPool) -> Router {
 }
 
 async fn whoami(app: &Router, token: Option<&str>) -> (StatusCode, Value) {
-    let mut req = Request::builder().method("GET").uri("/api/auth/whoami");
+    call(app, "GET", "/api/auth/whoami", token, None).await
+}
+
+async fn call(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    token: Option<&str>,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    let mut req = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("content-type", "application/json");
     if let Some(t) = token {
         req = req.header("authorization", format!("Bearer {t}"));
     }
     let res = app
         .clone()
-        .oneshot(req.body(Body::empty()).unwrap())
+        .oneshot(
+            req.body(match body {
+                Some(b) => Body::from(serde_json::to_vec(&b).unwrap()),
+                None => Body::empty(),
+            })
+            .unwrap(),
+        )
         .await
         .unwrap();
     let status = res.status();
@@ -46,6 +65,7 @@ async fn pool() -> Option<PgPool> {
     let url = std::env::var("DATABASE_URL").ok()?;
     let pool = PgPool::connect(&url).await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    testkit::ensure_grants(&pool).await;
     Some(pool)
 }
 
@@ -138,4 +158,98 @@ async fn whoami_returns_principal_with_resolved_roles() {
         .execute(&pool)
         .await
         .unwrap();
+}
+
+/// The Phase-2 enforcement contract: every /api/* route (except health)
+/// rejects unauthenticated callers with 401; an authenticated caller with
+/// insufficient role gets 403. `Service` is standalone — evaluate + products
+/// only, even viewer routes are off-limits.
+#[tokio::test]
+async fn role_gates_enforce_401_and_403() {
+    let Some(pool) = pool().await else {
+        eprintln!("DATABASE_URL unset — skipping auth test");
+        return;
+    };
+    let app = make_app(&pool);
+    let (viewer, pricer, admin, svc) = (
+        testkit::viewer_token(),
+        testkit::pricer_token(),
+        testkit::admin_token(),
+        testkit::svc_token(),
+    );
+    // A validly-signed token whose subject has zero grants.
+    let nobody = testkit::mint("nobody", 3600, &[]);
+
+    // Health stays public — no token at all.
+    let (status, _) = call(&app, "GET", "/healthz", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = call(&app, "GET", "/api/health", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // (method, uri, allowed, denied) — allowed/denied are token labels.
+    // "Allowed" means the gate passes: any non-401/403 status (the handler
+    // may still 4xx the empty body — that's downstream of auth).
+    let cases: &[(&str, &str, &[&str], &[&str])] = &[
+        ("GET", "/api/products", &["v", "p", "a", "s"], &[]),
+        (
+            "POST",
+            "/api/evaluate/eligibility",
+            &["v", "p", "a", "s"],
+            &[],
+        ),
+        ("POST", "/api/evaluate/pricing", &["v", "p", "a", "s"], &[]),
+        ("POST", "/api/validate/expression", &["v", "p", "a"], &["s"]),
+        ("POST", "/api/simulate/matrix", &["v", "p", "a"], &["s"]),
+        ("GET", "/api/decisions", &["v", "p", "a"], &["s"]),
+        ("GET", "/api/decisions/x", &["v", "p", "a"], &["s"]),
+        ("GET", "/api/expressions", &["v", "p", "a"], &["s"]),
+        ("GET", "/api/matrices", &["v", "p", "a"], &["s"]),
+        ("GET", "/api/rate-sheets", &["v", "p", "a"], &["s"]),
+        ("GET", "/api/publications", &["v", "p", "a"], &["s"]),
+        ("PUT", "/api/decisions/x", &["p", "a"], &["v", "s"]),
+        ("DELETE", "/api/decisions/x", &["p", "a"], &["v", "s"]),
+        ("PUT", "/api/expressions/x", &["p", "a"], &["v", "s"]),
+        ("DELETE", "/api/matrices/x", &["p", "a"], &["v", "s"]),
+        ("PUT", "/api/rate-sheets/x", &["p", "a"], &["v", "s"]),
+        ("POST", "/api/publications", &["a"], &["v", "p", "s"]),
+    ];
+    let token_for = |l: &str| match l {
+        "v" => &viewer,
+        "p" => &pricer,
+        "a" => &admin,
+        "s" => &svc,
+        _ => unreachable!(),
+    };
+
+    for (method, uri, allowed, denied) in cases {
+        // Unauthenticated → 401 (except health, covered above).
+        let (status, body) = call(&app, method, uri, None, None).await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "{method} {uri} unauthenticated should 401: {body}"
+        );
+        // Zero-role principal → 403 everywhere gated.
+        let (status, body) = call(&app, method, uri, Some(&nobody), None).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "{method} {uri} zero-role should 403: {body}"
+        );
+        for l in *denied {
+            let (status, body) = call(&app, method, uri, Some(token_for(l)), None).await;
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "{method} {uri} role {l} should 403: {body}"
+            );
+        }
+        for l in *allowed {
+            let (status, body) = call(&app, method, uri, Some(token_for(l)), None).await;
+            assert!(
+                status != StatusCode::UNAUTHORIZED && status != StatusCode::FORBIDDEN,
+                "{method} {uri} role {l} should pass the gate, got {status}: {body}"
+            );
+        }
+    }
 }

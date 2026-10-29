@@ -15,6 +15,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use mpex::api::{self, AppState};
+use mpex::auth::testkit;
 use mpex::rules::snapshot::SnapshotStore;
 
 const PRODUCT: &str = "P2TEST";
@@ -53,6 +54,10 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
         .method(method)
         .uri(uri)
         .header("content-type", "application/json")
+        .header(
+            "authorization",
+            format!("Bearer {}", testkit::admin_token()),
+        )
         .body(match body {
             Some(b) => Body::from(serde_json::to_vec(&b).unwrap()),
             None => Body::empty(),
@@ -95,6 +100,7 @@ async fn publish_lifecycle() {
     };
     let pool = PgPool::connect(&url).await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    testkit::ensure_grants(&pool).await;
 
     // Clean slate for this test's artifacts (test DB only — published rows
     // are immutable in production paths). Prior runs may have stamped drafts
@@ -136,7 +142,7 @@ async fn publish_lifecycle() {
     let app = api::router(AppState {
         pool: pool.clone(),
         snapshots: Arc::new(SnapshotStore::new(pool.clone())),
-        auth: None,
+        auth: Some(testkit::test_context(pool.clone())),
     });
 
     // --- Decision CRUD ------------------------------------------------------

@@ -84,6 +84,48 @@ pub fn test_context(pool: PgPool) -> Arc<AuthContext> {
     })
 }
 
+/// Canonical test subjects — `ensure_grants` gives each one its role so
+/// route-gate tests can mint tokens without touching grant rows.
+pub const SUB_VIEWER: &str = "test-viewer";
+pub const SUB_PRICER: &str = "test-pricer";
+pub const SUB_ADMIN: &str = "test-admin";
+pub const SUB_SVC: &str = "test-svc";
+
+/// Idempotently grants the canonical subjects their roles. Tests call this
+/// once after connecting; the rows persist for the DB's life and collide
+/// with nothing real (test-namespaced subjects).
+pub async fn ensure_grants(pool: &PgPool) {
+    sqlx::query(
+        "INSERT INTO role_grants (subject, role, granted_by) VALUES
+         ($1, 'viewer', 'testkit'), ($2, 'pricer', 'testkit'),
+         ($3, 'admin', 'testkit'), ($4, 'service', 'testkit')
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(SUB_VIEWER)
+    .bind(SUB_PRICER)
+    .bind(SUB_ADMIN)
+    .bind(SUB_SVC)
+    .execute(pool)
+    .await
+    .expect("seed test role_grants");
+}
+
+pub fn token(sub: &str) -> String {
+    mint(sub, 3600, &[])
+}
+pub fn viewer_token() -> String {
+    token(SUB_VIEWER)
+}
+pub fn pricer_token() -> String {
+    token(SUB_PRICER)
+}
+pub fn admin_token() -> String {
+    token(SUB_ADMIN)
+}
+pub fn svc_token() -> String {
+    token(SUB_SVC)
+}
+
 /// Convenience: token JSON for `json!({"sub": ..., "email": ...})` callers
 /// that want a claim set without touching the raw machinery.
 pub fn claims_json(sub: &str, email: Option<&str>) -> Value {

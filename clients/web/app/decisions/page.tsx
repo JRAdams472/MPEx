@@ -1,30 +1,55 @@
 "use client";
 
 import Typography from "@mui/material/Typography";
+
 import Paper from "@mui/material/Paper";
+
 import Table from "@mui/material/Table";
+
 import TableBody from "@mui/material/TableBody";
+
 import TableCell from "@mui/material/TableCell";
+
 import TableContainer from "@mui/material/TableContainer";
+
 import TableHead from "@mui/material/TableHead";
+
 import TableRow from "@mui/material/TableRow";
+
 import Chip from "@mui/material/Chip";
+
 import Alert from "@mui/material/Alert";
+
 import Button from "@mui/material/Button";
+
 import Dialog from "@mui/material/Dialog";
+
 import DialogTitle from "@mui/material/DialogTitle";
+
 import DialogContent from "@mui/material/DialogContent";
+
 import DialogActions from "@mui/material/DialogActions";
+
 import TextField from "@mui/material/TextField";
+
 import MenuItem from "@mui/material/MenuItem";
+
 import Box from "@mui/material/Box";
+
 import Link from "next/link";
+
 import { useRouter } from "next/navigation";
+
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+
 import { useState } from "react";
 
+
 import { endpoints } from "@/lib/api";
+
 import StatusChip from "@/components/StatusChip";
+import { useMe } from "@/lib/me";
+
 
 const KINDS = ["eligibility", "llpa", "pricing", "shared"];
 
@@ -44,6 +69,7 @@ const STARTER_JDM = {
 export default function DecisionsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { canEdit } = useMe();
   const { data, isLoading, error } = useQuery({
     queryKey: ["decisions"],
     queryFn: () => endpoints.decisions(),
@@ -80,9 +106,11 @@ export default function DecisionsPage() {
         <Typography variant="h4" component="h1" sx={{ flexGrow: 1 }}>
           Decisions
         </Typography>
-        <Button variant="contained" size="small" onClick={() => setOpen(true)}>
-          New decision
-        </Button>
+        {canEdit && (
+          <Button variant="contained" size="small" onClick={() => setOpen(true)}>
+            New decision
+          </Button>
+        )}
       </Box>
       {error && <Alert severity="error">{`${error}`}</Alert>}
       <TableContainer component={Paper} variant="outlined">

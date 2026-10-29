@@ -28,8 +28,8 @@ services:
       # OIDC resource-server config. Tokens carry iss=http://localhost:5556/dex
       # (what the browser sees); JWKS is fetched over the docker network.
       OIDC_ISSUER: http://localhost:5556/dex
-      # Dex stamps aud=client_id: mpex-web (UI sessions), mpex-svc (service).
-      OIDC_AUDIENCE: mpex-api,mpex-web,mpex-svc
+      # Dex stamps aud=client_id: mpex-web (UI), mpex-svc (svc), mpex-ci (automation).
+      OIDC_AUDIENCE: mpex-api,mpex-web,mpex-svc,mpex-ci
       OIDC_JWKS_URL: http://dex:5556/dex/keys
       # Observability exporters (both optional; unset = stdout JSON only).
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
@@ -52,6 +52,7 @@ services:
     command: ["dex", "serve", "/etc/dex/config.yaml"]
     environment:
       DEX_MPEX_SVC_SECRET: ${DEX_MPEX_SVC_SECRET:-mpex-svc-dev-secret}
+      DEX_MPEX_CI_SECRET: ${DEX_MPEX_CI_SECRET:-mpex-ci-dev-secret}
       DEX_CLIENT_CREDENTIAL_GRANT_ENABLED_BY_DEFAULT: "true"
     volumes:
       - ./dex/config.dev.yaml:/etc/dex/config.yaml:ro
@@ -61,11 +62,20 @@ services:
   web:
     build: clients/web
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8080
+      # BFF proxy target (docker-network internal) — browser never sees it.
+      API_URL: http://api:8080
+      # Browser-facing issuer for login redirects; token exchange goes over
+      # the docker network to the dex container.
+      OIDC_ISSUER: http://localhost:5556/dex
+      OIDC_TOKEN_URL: http://dex:5556/dex/token
+      OIDC_CLIENT_ID: mpex-web
+      OIDC_REDIRECT_URI: http://localhost:3000/auth/callback
+      SESSION_SECRET: mpex-dev-session-secret-change-me
     ports:
       - "3000:3000"
     depends_on:
       - api
+      - dex
 
   seq:
     image: datalust/seq:2025.2

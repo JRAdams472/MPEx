@@ -12,6 +12,21 @@ export default defineConfig({
   use: {
     baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3000",
   },
+  // Auth setup logs in via Dex once; other specs reuse the session cookie.
+  // auth.spec exercises the login flow itself, so it runs state-free.
+  projects: [
+    { name: "setup", testMatch: /auth\.setup\.ts/ },
+    {
+      name: "chromium-auth",
+      testMatch: /auth\.spec\.ts/,
+    },
+    {
+      name: "chromium",
+      dependencies: ["setup"],
+      testIgnore: /auth\.(spec|setup)\.ts/,
+      use: { storageState: "e2e/.auth/admin.json" },
+    },
+  ],
   webServer: {
     command: "npm run dev",
     url: process.env.E2E_BASE_URL ?? "http://localhost:3000",

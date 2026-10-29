@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { endpoints, mutationError } from "@/lib/api";
 import StatusChip from "@/components/StatusChip";
+import { useMe } from "@/lib/me";
 
 const KINDS = ["standard", "unary"];
 
@@ -26,6 +27,7 @@ export default function ExpressionDetailPage() {
   const { key: rawKey } = useParams<{ key: string }>();
   const key = decodeURIComponent(rawKey);
   const queryClient = useQueryClient();
+  const { canEdit } = useMe();
 
   const { data, error, isLoading } = useQuery({
     queryKey: ["expression", key],
@@ -111,22 +113,26 @@ export default function ExpressionDetailPage() {
           status={data.draft ? "draft" : "published"}
           hasPublished={Boolean(data.published)}
         />
-        <Button
-          variant="contained"
-          size="small"
-          disabled={!dirty || save.isPending}
-          onClick={() => save.mutate()}
-        >
-          Save draft
-        </Button>
-        <Button
-          size="small"
-          color="error"
-          disabled={!data.draft || remove.isPending}
-          onClick={() => remove.mutate()}
-        >
-          Delete draft
-        </Button>
+        {canEdit && (
+          <>
+            <Button
+              variant="contained"
+              size="small"
+              disabled={!dirty || save.isPending}
+              onClick={() => save.mutate()}
+            >
+              Save draft
+            </Button>
+            <Button
+              size="small"
+              color="error"
+              disabled={!data.draft || remove.isPending}
+              onClick={() => remove.mutate()}
+            >
+              Delete draft
+            </Button>
+          </>
+        )}
       </Box>
       {saveError && (
         <Alert severity="error" sx={{ mb: 2 }}>

@@ -83,6 +83,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use mpex::api::{self, AppState};
+use mpex::auth::testkit;
 use mpex::rules::snapshot::SnapshotStore;
 
 const PRODUCT: &str = "P4TEST";
@@ -94,6 +95,10 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
         .method(method)
         .uri(uri)
         .header("content-type", "application/json")
+        .header(
+            "authorization",
+            format!("Bearer {}", testkit::admin_token()),
+        )
         .body(match body {
             Some(b) => Body::from(serde_json::to_vec(&b).unwrap()),
             None => Body::empty(),
@@ -157,6 +162,7 @@ async fn pricing_lifecycle() {
     };
     let pool = PgPool::connect(&url).await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    testkit::ensure_grants(&pool).await;
 
     // Clean slate for this test's artifacts.
     for (table, key) in [
@@ -196,7 +202,7 @@ async fn pricing_lifecycle() {
     let app = api::router(AppState {
         pool: pool.clone(),
         snapshots: Arc::new(SnapshotStore::new(pool.clone())),
-        auth: None,
+        auth: Some(testkit::test_context(pool.clone())),
     });
 
     // --- Rate sheet CRUD + validation ---------------------------------------
