@@ -211,7 +211,7 @@ mod tests {
             "loan": {"purpose": "purchase", "type": "conventional", "amount": 450000,
                      "termMonths": 360, "ltv": 80.0, "dti": 36.5, "units": 1},
             "property": {"type": "sfr", "occupancy": "primary", "state": "TX"},
-            "borrower": {"fico": 740, "existingLiens": 0},
+            "borrower": {"creditScore": 740, "existingLiens": 0},
             "scenario": {"lockTermDays": 30, "estimatedClose": "2026-12-01"}
         });
         assert_eq!(denied(&loan), None);
@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn deep_nesting_caught() {
         let loan = json!({
-            "borrower": { "coborrowers": [ { "fico": 700 }, { "contact": { "ssn": "x" } } ] }
+            "borrower": { "coborrowers": [ { "creditScore": 700 }, { "contact": { "ssn": "x" } } ] }
         });
         assert_eq!(
             denied(&loan).as_deref(),

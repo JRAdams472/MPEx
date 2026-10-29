@@ -36,7 +36,8 @@ optional; unknown extension fields are preserved and visible to rules.
     "purchasePrice": 562500
   },
   "borrower": {
-    "fico": 740,
+    "creditScore": 740,
+    "creditModel": "FICO",          // FICO | VantageScore | F10T | other string
     "firstTimeBuyer": false,
     "selfEmployed": false,
     "reservesMonths": 6,
@@ -48,8 +49,8 @@ optional; unknown extension fields are preserved and visible to rules.
 }
 ```
 
-Rules reference paths like `loan.ltv`, `property.occupancy`, `borrower.fico`
-directly in ZEN expressions — e.g. `loan.ltv > 80`, `borrower.fico >= 700`,
+Rules reference paths like `loan.ltv`, `property.occupancy`, `borrower.creditScore`
+directly in ZEN expressions — e.g. `loan.ltv > 80`, `borrower.creditScore >= 700`,
 `loan.purpose == 'cashOutRefi'`.
 
 ## Eligibility decision contract

@@ -116,7 +116,7 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
 fn loan() -> Value {
     json!({
         "loan": { "ltv": 81.0 },
-        "borrower": { "fico": 760 },
+        "borrower": { "creditScore": 760 },
         "scenario": { "lockTermDays": 30 }
     })
 }
@@ -136,7 +136,7 @@ fn llpa_spec(adj: f64) -> Value {
 fn shared_spec(adj: f64) -> Value {
     json!({
         "rows": [{"id": "all", "expr": "loan.ltv > 0"}],
-        "cols": [{"id": "all", "expr": "borrower.fico > 0"}],
+        "cols": [{"id": "all", "expr": "borrower.creditScore > 0"}],
         "cells": { "all:all": adj },
         "op": "sum"
     })

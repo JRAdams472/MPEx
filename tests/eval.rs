@@ -121,7 +121,7 @@ async fn live_api_smoke() {
         "loan": {"purpose": "purchase", "type": "conventional", "amount": 450000,
                  "termMonths": 360, "amortization": "fixed", "ltv": 80.0, "dti": 36, "units": 1},
         "property": {"type": "sfr", "occupancy": "primary", "state": "TX"},
-        "borrower": {"fico": 740},
+        "borrower": {"creditScore": 740},
         "scenario": {"lockTermDays": 30}
     });
     let res: serde_json::Value = client

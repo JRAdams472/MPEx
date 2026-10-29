@@ -68,7 +68,7 @@ into `adjustments[]`, combined downstream by `op` (`sum` default | `list` |
 // spec
 {
   "rows": [{"id": "hi", "expr": "loan.ltv > 80"}],
-  "cols": [{"id": "good", "expr": "borrower.fico >= 740"}],
+  "cols": [{"id": "good", "expr": "borrower.creditScore >= 740"}],
   "cells": {"hi:good": 0.25},
   "op": "sum"
 }
@@ -123,7 +123,7 @@ versioned exactly like decisions. They're validated at save time
 snapshot alongside decisions — each expression is wrapped in a synthetic
 single-purpose decision, so rule graphs call it via `decisionNode` on its key:
 
-- `standard` (e.g. `borrower.fico >= 740 ? 'prime' : 'near-prime'`) evaluates
+- `standard` (e.g. `borrower.creditScore >= 740 ? 'prime' : 'near-prime'`) evaluates
   against the full context and emits `{result: <value>}`.
 - `unary` (e.g. `<= 80`) is wrapped in a one-rule decision table that
   predicates the caller's `input` field and emits `{result: bool}` — set

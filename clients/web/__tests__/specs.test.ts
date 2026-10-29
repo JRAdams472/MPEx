@@ -18,7 +18,7 @@ const ax = (id: string, expr: string, label = ""): AxisDraft => ({
 describe("matrix spec round-trip", () => {
   it("coerces cell text to scalars and drops blanks", () => {
     const spec = matrixDraftToSpec(
-      [ax("r1", "borrower.fico >= 740")],
+      [ax("r1", "borrower.creditScore >= 740")],
       [ax("c1", "loan.ltv <= 80"), ax("c2", "loan.ltv > 80")],
       { "r1:c1": "-0.25", "r1:c2": "  ", "r1:c3": "ignored" },
       "sum",
@@ -32,14 +32,14 @@ describe("matrix spec round-trip", () => {
 
   it("round-trips spec -> draft -> spec preserving scalars", () => {
     const spec = specToMatrixDraft({
-      rows: [{ id: "r1", label: "Prime", expr: "borrower.fico >= 740" }],
+      rows: [{ id: "r1", label: "Prime", expr: "borrower.creditScore >= 740" }],
       cols: [{ id: "c1", expr: "loan.ltv <= 80" }],
       cells: { "r1:c1": 0.5 },
       op: "max",
     });
     const out = matrixDraftToSpec(spec.rows, spec.cols, spec.cells, spec.op);
     expect(out.cells["r1:c1"]).toBe(0.5);
-    expect(out.rows[0]).toEqual({ id: "r1", label: "Prime", expr: "borrower.fico >= 740" });
+    expect(out.rows[0]).toEqual({ id: "r1", label: "Prime", expr: "borrower.creditScore >= 740" });
     expect(out.cols[0]).toEqual({ id: "c1", expr: "loan.ltv <= 80" });
     expect(out.op).toBe("max");
   });
@@ -61,7 +61,7 @@ describe("matrix overlap warnings", () => {
   it("flags duplicate expressions on the same axis", () => {
     const warnings = matrixOverlapWarnings(
       [ax("r1", "loan.ltv <= 80"), ax("r2", "loan.ltv <= 80")],
-      [ax("c1", "borrower.fico >= 700")],
+      [ax("c1", "borrower.creditScore >= 700")],
     );
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("rows r1, r2");
@@ -71,7 +71,7 @@ describe("matrix overlap warnings", () => {
     expect(
       matrixOverlapWarnings(
         [ax("r1", "loan.ltv <= 80")],
-        [ax("c1", "borrower.fico >= 700")],
+        [ax("c1", "borrower.creditScore >= 700")],
       ),
     ).toEqual([]);
   });
