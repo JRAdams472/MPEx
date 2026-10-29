@@ -90,6 +90,25 @@ docker exec mpex-seq-1 seqcli apikey create -t mpex-ingest \
   expression ≤ 64 KiB, serialized spec/jdm ≤ 1 MiB.
 - `RATE_LIMIT_DISABLE=1` turns limits off (local dev escape hatch — never prod).
 
+## PII guard
+
+`POST /api/evaluate/*` loan payloads pass `security::pii_guard` before
+`LoanScenario::parse`: a recursive JSON walk rejects denylisted field names
+(`ssn`, `email`, `phone`, `dob`, `account_number`, …; camel/snake/kebab
+normalized, token-boundary matched so `existingLiens`/`property.state` pass)
+and recognizable value shapes (SSN `\d{3}-\d{2}-\d{4}`, bare 9-digit runs,
+email). 400s carry the dotted field path only — values never reach errors or
+logs. Artifacts beyond the loan model stay PII-free by invariant; the guard
+is the enforcement point on the one endpoint family that accepts free-form
+loan data.
+
+## CI dependency scans
+
+`cargo audit` (RUSTSEC advisories) + `npm audit --audit-level=critical` gate
+every PR. Justified, unreachable-path ignores live in `.cargo/audit.toml`
+with the reasoning inline; known unfixable transitive advisories are tracked
+as Linear tickets, not ignored.
+
 ## Audit
 
 `audit_events` is append-only (storage-level trigger) and hash-chained;

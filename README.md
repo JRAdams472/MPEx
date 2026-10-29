@@ -49,6 +49,30 @@ Compose interpolates secrets from `.env` and refuses to start without them;
 
 Web UI: http://localhost:3000 · API: http://localhost:8080 (`/healthz`, `/api/health`).
 
+## Security
+
+- **AuthN/Z**: every `/api/*` route (except health) requires an OIDC bearer
+  token validated against the issuer's JWKS with an algorithm allowlist.
+  Roles — `viewer`, `pricer`, `admin`, `service` — resolve per request from
+  `role_grants`. Dev runs Dex in compose; humans log in via the web app's
+  auth-code+PKCE BFF (tokens sealed in an httpOnly session cookie), services
+  use client-credentials (`mpex-svc`, `mpex-ci`).
+- **Audit**: sensitive mutations and authenticated 403 denials append
+  hash-chained `audit_events` rows inside the mutation's transaction —
+  tamper-evident and append-only at the storage layer. Admins read it via
+  `GET /api/audit` and re-verify the chain via `GET /api/audit/verify`.
+- **PII guard**: `/api/evaluate/*` loan payloads are recursively scanned
+  before parsing — denylisted field names and SSN/email value shapes are
+  rejected 400 with the JSON path only.
+- **Edge**: per-IP rate limits (global + tighter mutation tier → 429 +
+  `Retry-After`), 2 MiB body cap, bounded artifact keys/labels/spec sizes,
+  allowlist CORS, and a `nosniff`/`DENY`/`no-referrer`/CSP/Permissions-Policy
+  header baseline on API and web responses.
+- **CI guards**: gitleaks secret scan, `cargo audit` (RUSTSEC), and
+  `npm audit` (critical gate) run on every PR.
+- Secrets, TLS termination, OIDC env, Seq ingest auth, and rotation:
+  `docs/security.md`.
+
 ## Observability
 
 `docker compose up` also starts **Seq** (logs, http://localhost:5341) and

@@ -1,0 +1,17 @@
+[advisories]
+ignore = [
+    # zip 8.x extraction advisories — zen-engine 2.1.x pins `zip = "8"` and no
+    # upstream release takes zip 9 yet. All three advisories live in archive
+    # *extraction* (`ZipArchive::extract`/`ZipStreamReader::extract`). MPEx
+    # loads JDM as JSON from Postgres snapshots via MemoryLoader/CachedLoader;
+    # no filesystem or bundle loader is ever constructed, so the vulnerable
+    # path is unreachable. Revisit when zen-engine ships zip 9.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+    # Marvin timing oracle — affects RSA *decryption* (PKCS#1 v1.5 unwrap
+    # oracles). `rsa` arrives via zen-engine's reqsign cloud-storage decision
+    # loaders, which MPEx never instantiates; jsonwebtoken performs signature
+    # verification only — no decryption oracle exists. No fix released.
+    "RUSTSEC-2023-0071",
+]

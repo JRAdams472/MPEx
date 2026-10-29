@@ -63,6 +63,26 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks.toml
 
+  deps:
+    name: Deps — cargo audit + npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: clients/web/package-lock.json
+      - run: npm ci
+        working-directory: clients/web
+      # Gate on critical: jdm-editor's transitive uuid/zod advisories are
+      # unfixable without a breaking downgrade — tracked in a follow-up.
+      - run: npm audit --omit=dev --audit-level=critical
+        working-directory: clients/web
+
   e2e:
     name: E2E — Playwright (seeded stack)
     runs-on: ubuntu-latest
