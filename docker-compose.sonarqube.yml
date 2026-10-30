@@ -1,0 +1,33 @@
+# docker-compose.sonarqube.yml — local SonarQube Community Build for code
+# quality analysis. Standalone overlay (not part of the app stack): start it
+# only when you want to scan or query via the sonarqube MCP server.
+#
+#   docker compose -f docker-compose.sonarqube.yml up -d
+#
+# First boot takes ~2 min; check readiness with:
+#   curl -s http://localhost:9000/api/system/status
+#
+# The embedded database lives in sonar_data — fine for local analysis.
+# UI at http://localhost:9000 (admin/admin, forced password change on
+# first login). The sonarqube MCP server (.devin/mcp_config.local.json)
+# connects to http://host.docker.internal:9000 — generate a user token in
+# the UI and point SONARQUBE_TOKEN at it. Shares port 9000 with LOLA's
+# overlay — run one at a time, or reuse that instance (scans are
+# distinguished by sonar.projectKey=mpex).
+services:
+  sonarqube:
+    image: sonarqube:community
+    container_name: mpex-sonarqube
+    ports:
+      - "127.0.0.1:9000:9000"
+    environment:
+      SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
+    volumes:
+      - sonar_data:/opt/sonarqube/data
+      - sonar_extensions:/opt/sonarqube/extensions
+      - sonar_logs:/opt/sonarqube/logs
+
+volumes:
+  sonar_data:
+  sonar_extensions:
+  sonar_logs:

@@ -71,9 +71,11 @@ Web UI: http://localhost:3000 · API: http://localhost:8080 (`/healthz`, `/api/h
   `Retry-After`), 2 MiB body cap, bounded artifact keys/labels/spec sizes,
   allowlist CORS, and a `nosniff`/`DENY`/`no-referrer`/CSP/Permissions-Policy
   header baseline on API and web responses.
-- **CI guards**: gitleaks secret scan, `cargo audit` (RUSTSEC), and a
+- **CI guards**: gitleaks secret scan, `cargo audit` (RUSTSEC), a
   filtered `npm audit` gate (high/critical in prod deps, minus documented
-  exceptions in `clients/web/npm-audit-exceptions.json`) run on every PR.
+  exceptions in `clients/web/npm-audit-exceptions.json`), and a SonarQube
+  Community scan + quality gate (ephemeral per-run instance; sources/
+  suppressions in `sonar-project.properties`) run on every PR.
 - Secrets, TLS termination, OIDC env, Seq ingest auth, and rotation:
   `docs/security.md`.
 
