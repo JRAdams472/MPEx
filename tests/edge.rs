@@ -255,6 +255,77 @@ async fn rate_limits_429_with_retry_after() {
         .unwrap();
 }
 
+/// The mutation tier covers the rate-index admin POSTs (MPE-152): preview
+/// and import draw the tight bucket, while compute POSTs (evaluate) stay
+/// on the global tier — exhausting mutations must not block evaluation.
+#[tokio::test]
+async fn rate_index_posts_use_mutation_bucket() {
+    let Some(pool) = pool().await else {
+        eprintln!("DATABASE_URL unset — skipping edge test");
+        return;
+    };
+    // global=4, mutations=1 on the shared "unknown" bucket.
+    let app = make_app_with_limits(&pool, Some(Arc::new(EdgeLimits::new(4, 1))));
+    let admin = testkit::admin_token();
+    let preview = || {
+        req(
+            "POST",
+            "/api/admin/rate-index/preview",
+            Some(&admin),
+            None,
+            None,
+        )
+    };
+
+    // Preview #1: global(1) + mutation(1) → reaches the handler, which
+    // 400s because RATE_INDEX_URL is unconfigured — not a 429.
+    let res = app.clone().oneshot(preview()).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // Preview #2: mutation bucket empty → 429 mutation + Retry-After.
+    let res = app.clone().oneshot(preview()).await.unwrap();
+    assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(res.headers().contains_key("retry-after"));
+    let body: Value =
+        serde_json::from_slice(&to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(body["error"], json!("rate limited (mutation bucket)"));
+
+    // Import draws the same tight bucket → 429 (global still has budget).
+    let s = status(
+        &app,
+        req(
+            "POST",
+            "/api/admin/rate-index/import",
+            Some(&admin),
+            None,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::TOO_MANY_REQUESTS);
+
+    // Evaluate stays global-only: global 3/4 used → the compute path is
+    // still served (200) even with the mutation tier exhausted.
+    let s = status(
+        &app,
+        req(
+            "POST",
+            "/api/evaluate/eligibility",
+            Some(&admin),
+            Some(json!({
+                "loan": {
+                    "loan": { "ltv": 80.0 },
+                    "borrower": { "creditScore": 740 },
+                    "scenario": { "lockTermDays": 30 }
+                }
+            })),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+}
+
 /// With XFF trusted, each forwarded IP gets its own bucket.
 #[tokio::test]
 async fn xff_partitions_buckets_when_trusted() {

@@ -112,7 +112,8 @@ fn join(path: &str, key: &str) -> String {
 }
 
 /// Lowercase + alnum only: `dateOfBirth` ≡ `date_of_birth` ≡ `dateofbirth`.
-fn normalize(s: &str) -> String {
+/// `pub(crate)` — `security::mask` reuses the same normalization.
+pub(crate) fn normalize(s: &str) -> String {
     s.chars()
         .filter(|c| c.is_alphanumeric())
         .flat_map(char::to_lowercase)
@@ -121,7 +122,8 @@ fn normalize(s: &str) -> String {
 
 /// Split a name on non-alphanumeric chars and camelCase boundaries:
 /// `homePhone` → [home, phone], `SSN_Number` → [ssn, number].
-fn tokenize(s: &str) -> Vec<String> {
+/// `pub(crate)` — `security::mask` reuses the same tokenization.
+pub(crate) fn tokenize(s: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     for c in s.chars() {

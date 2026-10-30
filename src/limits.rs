@@ -75,12 +75,21 @@ fn env_u32(name: &str, default: u32) -> u32 {
         .unwrap_or(default)
 }
 
-/// Mutation tier = state-changing requests. POSTs are mostly reads here
-/// (evaluate/simulate/validate) — only the publish POST mutates, so it's
-/// the one POST in the tight bucket. Eval stays on the global tier.
+/// Mutation tier = state-changing or network-expensive requests. POSTs are
+/// mostly reads here (evaluate/simulate/validate stay on the global tier) —
+/// the tight bucket covers PUT/DELETE plus the POSTs that write
+/// (`/api/publications`, rate-index import) or reach outside
+/// (`/api/admin/rate-index/preview` fetches an external page — a flood would
+/// amplify upstream).
 fn is_mutation(req: &Request) -> bool {
-    matches!(req.method(), &Method::PUT | &Method::DELETE)
-        || (req.method() == Method::POST && req.uri().path() == "/api/publications")
+    if matches!(req.method(), &Method::PUT | &Method::DELETE) {
+        return true;
+    }
+    req.method() == Method::POST
+        && matches!(
+            req.uri().path(),
+            "/api/publications" | "/api/admin/rate-index/preview" | "/api/admin/rate-index/import"
+        )
 }
 
 fn client_ip(req: &Request, trust_xff: bool) -> IpAddr {
