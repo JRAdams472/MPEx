@@ -18,6 +18,7 @@ import FunctionsIcon from "@mui/icons-material/Functions";
 import GridOnIcon from "@mui/icons-material/GridOn";
 import TableChartIcon from "@mui/icons-material/TableChart";
 import ScienceIcon from "@mui/icons-material/Science";
+import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import PublishIcon from "@mui/icons-material/Publish";
 import HistoryIcon from "@mui/icons-material/History";
 import LogoutIcon from "@mui/icons-material/Logout";
@@ -42,12 +43,13 @@ const NAV = [
   { href: "/rate-sheets", label: "Rate sheets", icon: <TableChartIcon /> },
   { href: "/publications", label: "Publications", icon: <HistoryIcon /> },
   { href: "/sandbox", label: "Sandbox", icon: <ScienceIcon /> },
+  { href: "/grants", label: "Grants", icon: <AdminPanelSettingsIcon />, adminOnly: true },
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [publishOpen, setPublishOpen] = useState(false);
-  const { me, canPublish } = useMe();
+  const { me, canPublish, isAdmin } = useMe();
 
   return (
     <Box sx={{ display: "flex", minHeight: "100vh" }}>
@@ -114,7 +116,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <Toolbar variant="dense" />
         <Divider />
         <List dense sx={{ px: 1 }}>
-          {NAV.map((item) => {
+          {NAV.filter((item) => !("adminOnly" in item && item.adminOnly) || isAdmin).map((item) => {
             const selected =
               item.href === "/"
                 ? pathname === "/"

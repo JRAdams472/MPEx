@@ -171,6 +171,29 @@ export interface ArtifactDetail {
   history: HistoryEntry[];
 }
 
+export type SubjectType = "sub" | "email" | "aud";
+export type Role = "viewer" | "pricer" | "admin" | "service";
+
+/** A role_grants row (admin surface). `envs` is null = unrestricted,
+ *  [] = no lanes permitted, or a lane list (MPE-153/MPE-159). */
+export interface Grant {
+  id: number;
+  subjectType: SubjectType;
+  subject: string;
+  role: Role;
+  grantedAt: string;
+  grantedBy: string;
+  envs: Env[] | null;
+}
+
+export interface GrantUpsert {
+  subjectType: SubjectType;
+  subject: string;
+  role: Role;
+  /** Omit for unrestricted (NULL); [] permits no lanes. */
+  envs?: Env[];
+}
+
 export interface Publication {
   id: string;
   label: string;
@@ -345,6 +368,10 @@ export const endpoints = {
    *  into `to` under a new publication. 400 non-adjacent, 409 empty delta. */
   promote: (from: Env, to: Env, label: string) =>
     apiPost<Publication>("/api/admin/promotions", { from, to, label }),
+  grants: () => apiGet<{ grants: Grant[] }>("/api/admin/grants"),
+  upsertGrant: (body: GrantUpsert) =>
+    apiPut<{ grant: Grant; created: boolean }>("/api/admin/grants", body),
+  revokeGrant: (id: number) => apiDelete(`/api/admin/grants/${id}`),
   rateIndex: () =>
     apiGet<{ indexLabels: string[]; imports: RateIndexImportRow[] }>(
       "/api/rate-index",

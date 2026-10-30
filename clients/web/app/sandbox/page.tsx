@@ -32,6 +32,7 @@ import {
   ENVS,
   PricingReport,
 } from "../../lib/api";
+import { useMe } from "../../lib/me";
 
 const SAMPLE = {
   loan: {
@@ -162,6 +163,7 @@ export default function SandboxPage() {
   const [asOf, setAsOf] = useState("");
   // dev = the working lane; qa/uat/prod only see promoted artifacts (MPE-153).
   const [env, setEnv] = useState<Env>("dev");
+  const { me } = useMe();
   const [trace, setTrace] = useState(true);
   const [rate, setRate] = useState("");
   const [lockTerm, setLockTerm] = useState("");
@@ -194,7 +196,11 @@ export default function SandboxPage() {
         env,
         trace,
       });
-      if (res.status >= 400) throw new Error(`eligibility: HTTP ${res.status}`);
+      if (res.status >= 400)
+        throw new Error(
+          (res.data as { error?: string }).error ??
+            `eligibility: HTTP ${res.status}`,
+        );
       return res.data;
     },
     onSuccess: (data) => {
@@ -214,7 +220,11 @@ export default function SandboxPage() {
         env,
         trace,
       });
-      if (res.status >= 400) throw new Error(`pricing: HTTP ${res.status}`);
+      if (res.status >= 400)
+        throw new Error(
+          (res.data as { error?: string }).error ??
+            `pricing: HTTP ${res.status}`,
+        );
       return res.data;
     },
     onSuccess: setPricing,
@@ -397,6 +407,11 @@ export default function SandboxPage() {
               label="Environment"
               value={env}
               onChange={(e) => setEnv(e.target.value as Env)}
+              helperText={
+                me?.permittedEnvs
+                  ? `your grants permit: ${me.permittedEnvs.join(", ")}`
+                  : undefined
+              }
             >
               {ENVS.map((e) => (
                 <MenuItem key={e} value={e}>
