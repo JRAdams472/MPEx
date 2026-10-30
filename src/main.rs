@@ -42,11 +42,33 @@ async fn main() -> anyhow::Result<()> {
     // AppState so test routers simply leave them unset and un-throttled.
     let rate_limits = mpex::limits::EdgeLimits::from_env();
 
+    let rate_index = mpex::rate_index::IndexSettings {
+        url: cfg.rate_index_url.clone(),
+        timeout: std::time::Duration::from_secs(cfg.rate_index_timeout_secs),
+    };
+
+    // Daily rate-index import — env-scheduled; RATE_INDEX_DAILY_AT unset
+    // keeps the scheduler off (tests/local runs never hit the network).
+    if let Some(at) = cfg.rate_index_daily_at.as_deref() {
+        match mpex::rate_index::parse_daily_at(at) {
+            Ok(at) => {
+                tracing::info!(at = %at, "rate-index scheduler enabled");
+                tokio::spawn(mpex::rate_index::run_daily(
+                    pool.clone(),
+                    rate_index.clone(),
+                    at,
+                ));
+            }
+            Err(e) => tracing::warn!("{e} — rate-index scheduler disabled"),
+        }
+    }
+
     let app = api::router(api::AppState {
         pool,
         snapshots,
         auth,
         rate_limits,
+        rate_index: Some(rate_index),
     })
     // INFO so request spans survive the EnvFilter and reach the OTLP
     // trace exporter (the DefaultMakeSpan default is DEBUG).

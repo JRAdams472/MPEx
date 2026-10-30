@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -134,27 +134,8 @@ pub async fn publish(
     .await?;
 
     // Rate sheets: `spec` is the whole artifact (a data grid, not rules).
-    let rate_sheets: Vec<String> = sqlx::query_scalar(
-        "WITH latest AS (
-           SELECT DISTINCT ON (key) key, spec
-           FROM rate_sheets WHERE status = 'published'
-           ORDER BY key, published_at DESC
-         ), ins AS (
-           INSERT INTO rate_sheets
-             (key, status, published_at, publication_id, spec)
-           SELECT d.key, 'published', $1, $2, d.spec
-           FROM rate_sheets d
-           LEFT JOIN latest p ON p.key = d.key
-           WHERE d.status = 'draft'
-             AND (p.key IS NULL OR p.spec IS DISTINCT FROM d.spec)
-           RETURNING key
-         )
-         SELECT key FROM ins ORDER BY key",
-    )
-    .bind(published_at)
-    .bind(id)
-    .fetch_all(&mut *tx)
-    .await?;
+    let rate_sheets = changed_rate_sheet_drafts(&mut tx).await?;
+    stamp_rate_sheet_drafts(&mut tx, published_at, id, &rate_sheets).await?;
 
     if decisions.is_empty()
         && expressions.is_empty()
@@ -210,4 +191,102 @@ pub async fn publish(
         matrices,
         rate_sheets,
     })
+}
+
+/// Rate-sheet draft keys whose content differs from their latest published
+/// row (or that were never published) — the set `publish` stamps.
+async fn changed_rate_sheet_drafts(
+    tx: &mut Transaction<'_, Postgres>,
+) -> Result<Vec<String>, AppError> {
+    sqlx::query_scalar(
+        "WITH latest AS (
+           SELECT DISTINCT ON (key) key, spec
+           FROM rate_sheets WHERE status = 'published'
+           ORDER BY key, published_at DESC
+         )
+         SELECT d.key FROM rate_sheets d
+           LEFT JOIN latest p ON p.key = d.key
+         WHERE d.status = 'draft'
+           AND (p.key IS NULL OR p.spec IS DISTINCT FROM d.spec)
+         ORDER BY d.key",
+    )
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(AppError::from)
+}
+
+/// Copies each listed draft into an immutable published row under `id`.
+async fn stamp_rate_sheet_drafts(
+    tx: &mut Transaction<'_, Postgres>,
+    published_at: DateTime<Utc>,
+    publication_id: Uuid,
+    keys: &[String],
+) -> Result<(), AppError> {
+    sqlx::query(
+        "INSERT INTO rate_sheets (key, status, published_at, publication_id, spec)
+         SELECT d.key, 'published', $1, $2, d.spec
+         FROM rate_sheets d
+         WHERE d.status = 'draft' AND d.key = ANY($3)",
+    )
+    .bind(published_at)
+    .bind(publication_id)
+    .bind(keys)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// Publishes just the rate sheets, inside the caller's transaction — used
+/// by the rate-index importer so an unattended import never sweeps
+/// unrelated decision/matrix/expression drafts into a publication.
+/// Returns `None` when no sheet changed (the import is still recorded;
+/// no empty publication is stamped).
+pub async fn publish_rate_sheets(
+    tx: &mut Transaction<'_, Postgres>,
+    label: &str,
+    actor: crate::audit::Actor,
+) -> Result<Option<Publication>, AppError> {
+    let label = label.trim();
+    if label.is_empty() {
+        return Err(AppError::BadRequest("publication label is required".into()));
+    }
+    crate::api::validate::validate_label(label)?;
+
+    let rate_sheets = changed_rate_sheet_drafts(tx).await?;
+    if rate_sheets.is_empty() {
+        return Ok(None);
+    }
+    let (id, published_at): (Uuid, DateTime<Utc>) =
+        sqlx::query_as("INSERT INTO publications (label) VALUES ($1) RETURNING id, published_at")
+            .bind(label)
+            .fetch_one(&mut **tx)
+            .await?;
+    stamp_rate_sheet_drafts(tx, published_at, id, &rate_sheets).await?;
+    crate::audit::record(
+        tx,
+        actor,
+        crate::audit::Event {
+            action: crate::audit::action::PUBLICATION_CREATE,
+            artifact_table: Some("publications"),
+            artifact_key: Some(id.to_string()),
+            detail: serde_json::json!({
+                "label": label,
+                "decisionCount": 0,
+                "expressionCount": 0,
+                "matrixCount": 0,
+                "rateSheetCount": rate_sheets.len(),
+            }),
+        },
+    )
+    .await?;
+    Ok(Some(Publication {
+        id,
+        label: label.to_string(),
+        status: "published".into(),
+        published_at,
+        decisions: vec![],
+        expressions: vec![],
+        matrices: vec![],
+        rate_sheets,
+    }))
 }

@@ -1,15 +1,22 @@
 -- Demo seed: products + per-product eligibility decisions.
 -- Runs via `RUN_SEED=1` on the api service after sqlx migrations (idempotent).
 
-INSERT INTO products (code, name, loan_type, amortization, term_months, description)
-SELECT * FROM (VALUES
-  ('CONV30',  'Conventional 30-Year Fixed', 'conventional', 'fixed', 360, 'Conforming conventional fixed-rate, 30y'),
-  ('CONV15',  'Conventional 15-Year Fixed', 'conventional', 'fixed', 180, 'Conforming conventional fixed-rate, 15y'),
-  ('CONV75ARM','Conventional 7/6 ARM',      'conventional', 'arm',   360, 'Conforming conventional ARM, 7y fixed then 6mo adj'),
-  ('FHA30',   'FHA 30-Year Fixed',          'fha',          'fixed', 360, 'FHA-insured fixed-rate, 30y'),
-  ('JUMBO30', 'Jumbo 30-Year Fixed',        'jumbo',        'fixed', 360, 'Non-conforming jumbo fixed-rate, 30y')
-) AS v(code, name, loan_type, amortization, term_months, description)
-WHERE NOT EXISTS (SELECT 1 FROM products);
+-- Per-row idempotent: migration 0009 pre-inserts VA30 before seeding, so a
+-- whole-table guard would skip everything on fresh databases. Rate-source
+-- columns mirror the migration's mapping: `mnd_label` = MND index base
+-- product, `base_product_code`+`rate_adjustment` = derived (FHA15 demos
+-- this), neither = manual sheet.
+INSERT INTO products (code, name, loan_type, amortization, term_months, description,
+                      mnd_label, base_product_code, rate_adjustment)
+VALUES
+  ('CONV30',  'Conventional 30-Year Fixed', 'conventional', 'fixed', 360, 'Conforming conventional fixed-rate, 30y', '30 Yr. Fixed', NULL, 0),
+  ('CONV15',  'Conventional 15-Year Fixed', 'conventional', 'fixed', 180, 'Conforming conventional fixed-rate, 15y', '15 Yr. Fixed', NULL, 0),
+  ('CONV75ARM','Conventional 7/6 ARM',      'conventional', 'arm',   360, 'Conforming conventional ARM, 7y fixed then 6mo adj', '7/6 SOFR ARM', NULL, 0),
+  ('FHA30',   'FHA 30-Year Fixed',          'fha',          'fixed', 360, 'FHA-insured fixed-rate, 30y', '30 Yr. FHA', NULL, 0),
+  ('JUMBO30', 'Jumbo 30-Year Fixed',        'jumbo',        'fixed', 360, 'Non-conforming jumbo fixed-rate, 30y', '30 Yr. Jumbo', NULL, 0),
+  ('VA30',    'VA 30-Year Fixed',           'va',           'fixed', 360, 'VA-guaranteed fixed-rate, 30y', '30 Yr. VA', NULL, 0),
+  ('FHA15',   'FHA 15-Year Fixed',          'fha',          'fixed', 180, 'FHA-insured fixed-rate, 15y — derived off FHA30', NULL, 'FHA30', -0.25)
+ON CONFLICT (code) DO NOTHING;
 
 -- Eligibility decision shape:
 --   input -> decision table of fail conditions (first-hit, reasons[] collects ALL

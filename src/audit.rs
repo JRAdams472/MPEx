@@ -35,6 +35,8 @@ pub mod action {
     pub const AUTH_DENIED: &str = "auth.denied";
     pub const GRANT_PUT: &str = "grant.put";
     pub const GRANT_DELETE: &str = "grant.delete";
+    pub const RATE_INDEX_IMPORT: &str = "rate_index.import";
+    pub const PRODUCT_RATE_CONFIG_PUT: &str = "product.rate_config.put";
 }
 
 /// Attribution for an event, derived from the request's `Principal`.

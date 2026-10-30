@@ -27,6 +27,7 @@ fn make_app_with_limits(pool: &PgPool, limits: Option<Arc<EdgeLimits>>) -> Route
         snapshots: Arc::new(SnapshotStore::new(pool.clone())),
         auth: Some(testkit::test_context(pool.clone())),
         rate_limits: limits,
+        rate_index: None,
     })
 }
 

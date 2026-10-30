@@ -7,6 +7,7 @@ pub mod domain;
 pub mod error;
 pub mod limits;
 pub mod pricing;
+pub mod rate_index;
 pub mod rules;
 pub mod security;
 pub mod seed;
