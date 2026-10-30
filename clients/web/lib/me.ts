@@ -6,6 +6,8 @@ export interface Me {
   sub: string;
   email: string | null;
   roles: string[];
+  /** Lanes this principal may evaluate in — null = unrestricted (MPE-159). */
+  permittedEnvs: string[] | null;
 }
 
 /**
@@ -35,5 +37,6 @@ export function useMe() {
     me: q.data,
     canEdit: roles.includes("pricer") || roles.includes("admin"),
     canPublish: roles.includes("admin"),
+    isAdmin: roles.includes("admin"),
   };
 }
