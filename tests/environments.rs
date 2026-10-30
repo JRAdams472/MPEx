@@ -365,7 +365,7 @@ async fn promote_stamps_changed_artifacts_into_next_lane() {
     // Promotion wrote an attributed audit row.
     let row: (String,) = sqlx::query_as(
         "SELECT action FROM audit_events
-         WHERE action = 'promotion.create' ORDER BY created_at DESC LIMIT 1",
+         WHERE action = 'promotion.create' ORDER BY occurred_at DESC LIMIT 1",
     )
     .fetch_one(&pool)
     .await
