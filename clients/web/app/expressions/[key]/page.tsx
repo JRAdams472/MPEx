@@ -207,6 +207,7 @@ export default function ExpressionDetailPage() {
           </Typography>
           {data.history.map((h) => (
             <Typography key={h.publicationId} variant="body2" color="text.secondary">
+              <Chip label={h.env} size="small" variant="outlined" sx={{ mr: 1 }} />
               {h.publicationLabel ?? h.publicationId} —{" "}
               {new Date(h.publishedAt).toLocaleString()}
             </Typography>

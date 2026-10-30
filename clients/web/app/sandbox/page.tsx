@@ -28,6 +28,8 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   endpoints,
   EligibilityReport,
+  Env,
+  ENVS,
   PricingReport,
 } from "../../lib/api";
 
@@ -158,6 +160,8 @@ export default function SandboxPage() {
   const [extrasJson, setExtrasJson] = useState("{}");
   const [extrasError, setExtrasError] = useState<string | null>(null);
   const [asOf, setAsOf] = useState("");
+  // dev = the working lane; qa/uat/prod only see promoted artifacts (MPE-153).
+  const [env, setEnv] = useState<Env>("dev");
   const [trace, setTrace] = useState(true);
   const [rate, setRate] = useState("");
   const [lockTerm, setLockTerm] = useState("");
@@ -185,11 +189,11 @@ export default function SandboxPage() {
   const runEligibility = useMutation({
     mutationFn: async () => {
       const loan = buildLoan();
-      const res = await endpoints.evaluateEligibility(
-        loan,
-        asOf || undefined,
+      const res = await endpoints.evaluateEligibility(loan, {
+        asOf: asOf || undefined,
+        env,
         trace,
-      );
+      });
       if (res.status >= 400) throw new Error(`eligibility: HTTP ${res.status}`);
       return res.data;
     },
@@ -207,6 +211,7 @@ export default function SandboxPage() {
         rate: num(rate),
         lockTermDays: num(lockTerm),
         asOf: asOf || undefined,
+        env,
         trace,
       });
       if (res.status >= 400) throw new Error(`pricing: HTTP ${res.status}`);
@@ -387,6 +392,19 @@ export default function SandboxPage() {
             }}
           >
             <TextField
+              select
+              size="small"
+              label="Environment"
+              value={env}
+              onChange={(e) => setEnv(e.target.value as Env)}
+            >
+              {ENVS.map((e) => (
+                <MenuItem key={e} value={e}>
+                  {e}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
               size="small"
               label="asOf (blank, draft, RFC3339)"
               value={asOf}
@@ -445,7 +463,7 @@ export default function SandboxPage() {
             <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
               <Typography variant="subtitle1" gutterBottom>
                 Eligibility — revision {elig.revision} ·{" "}
-                {elig.elapsedMs.toFixed(1)} ms
+                {elig.elapsedMs.toFixed(1)} ms · env {env}
               </Typography>
               <Stack
                 direction="row"
@@ -530,7 +548,7 @@ export default function SandboxPage() {
             <Paper variant="outlined" sx={{ p: 2 }}>
               <Typography variant="subtitle1" gutterBottom>
                 Pricing — revision {pricing.revision} ·{" "}
-                {pricing.elapsedMs.toFixed(1)} ms
+                {pricing.elapsedMs.toFixed(1)} ms · env {env}
               </Typography>
               {pricing.priced.map((p) => (
                 <Accordion
