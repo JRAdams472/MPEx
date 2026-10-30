@@ -15,18 +15,22 @@ pub struct ListQuery {
     /// Omitted or "draft" = working drafts; RFC3339 = the published snapshot
     /// as of that timestamp.
     pub as_of: Option<String>,
+    /// Lane the published (asOf) view resolves in; omitted = dev (MPE-153).
+    pub env: Option<String>,
 }
 
 pub async fn list(
     State(state): State<AppState>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Value>, AppError> {
+    let env = super::parse_env(q.env.as_deref())?;
     let expressions = match super::parse_admin_as_of(q.as_of.as_deref())? {
         None => {
             let rows = sqlx::query_as::<_, (String, String, String, DateTime<Utc>, bool)>(
                 "SELECT e.key, e.kind, e.description, e.updated_at,
                         EXISTS (SELECT 1 FROM expressions p
-                                WHERE p.key = e.key AND p.status = 'published')
+                                WHERE p.key = e.key AND p.status = 'published'
+                                  AND p.env = 'dev')
                  FROM expressions e WHERE e.status = 'draft' ORDER BY e.key",
             )
             .fetch_all(&state.pool)
@@ -49,10 +53,11 @@ pub async fn list(
                 sqlx::query_as::<_, (String, String, String, Option<DateTime<Utc>>, Option<Uuid>)>(
                     "SELECT DISTINCT ON (key) key, kind, description, published_at, publication_id
                  FROM expressions
-                 WHERE status = 'published' AND published_at <= $1
+                 WHERE status = 'published' AND published_at <= $1 AND env = $2
                  ORDER BY key, published_at DESC",
                 )
                 .bind(ts)
+                .bind(env.as_str())
                 .fetch_all(&state.pool)
                 .await?;
             rows.into_iter()
@@ -128,7 +133,7 @@ pub async fn get(
     .await?;
     let published = sqlx::query_as::<_, ExpressionRow>(&format!(
         "SELECT {ROW_COLS} FROM expressions
-             WHERE key = $1 AND status = 'published'
+             WHERE key = $1 AND status = 'published' AND env = 'dev'
              ORDER BY published_at DESC LIMIT 1"
     ))
     .bind(&key)
@@ -138,24 +143,26 @@ pub async fn get(
         return Err(AppError::NotFound(format!("expression {key}")));
     }
 
-    let history = sqlx::query_as::<_, (Option<DateTime<Utc>>, Option<Uuid>, Option<String>)>(
-        "SELECT e.published_at, e.publication_id, p.label
+    let history =
+        sqlx::query_as::<_, (Option<DateTime<Utc>>, Option<Uuid>, Option<String>, String)>(
+            "SELECT e.published_at, e.publication_id, p.label, e.env
          FROM expressions e LEFT JOIN publications p ON p.id = e.publication_id
          WHERE e.key = $1 AND e.status = 'published'
          ORDER BY e.published_at DESC",
-    )
-    .bind(&key)
-    .fetch_all(&state.pool)
-    .await?
-    .into_iter()
-    .map(|(published_at, publication_id, label)| {
-        json!({
-            "publishedAt": published_at,
-            "publicationId": publication_id,
-            "publicationLabel": label,
+        )
+        .bind(&key)
+        .fetch_all(&state.pool)
+        .await?
+        .into_iter()
+        .map(|(published_at, publication_id, label, env)| {
+            json!({
+                "publishedAt": published_at,
+                "publicationId": publication_id,
+                "publicationLabel": label,
+                "env": env,
+            })
         })
-    })
-    .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
     Ok(Json(json!({
         "key": key,

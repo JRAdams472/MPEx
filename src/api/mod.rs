@@ -41,6 +41,17 @@ fn parse_admin_as_of(
     }
 }
 
+/// `?env=` on admin list views: omitted = the dev working lane (MPE-153).
+fn parse_env(env: Option<&str>) -> Result<crate::rules::loader::Env, AppError> {
+    env.map(|e| {
+        crate::rules::loader::Env::parse(e).ok_or_else(|| {
+            AppError::BadRequest(format!("env must be one of dev|qa|uat|prod: {e:?}"))
+        })
+    })
+    .transpose()
+    .map(|e| e.unwrap_or(crate::rules::loader::Env::Dev))
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
@@ -131,6 +142,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/audit/verify", get(audit::verify))
         .route("/api/admin/grants", get(grants::list).put(grants::upsert))
         .route("/api/admin/grants/{id}", delete(grants::revoke))
+        .route("/api/admin/promotions", post(publications::promote))
         .route("/api/admin/rate-index/preview", post(rate_index::preview))
         .route("/api/admin/rate-index/import", post(rate_index::import))
         .route(

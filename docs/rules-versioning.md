@@ -9,8 +9,9 @@ over it.
 
 ```
  PUT /api/{decisions,expressions,matrices,rate-sheets}/{key}
-                                           →  mutable draft (one per key)
+                                           →  mutable draft (one per key, dev lane)
  POST /api/publications                   →  atomic publish of every *changed* draft
+ POST /api/admin/promotions               →  copy changed artifacts one lane forward
  GET  ...?asOf=<rfc3339>                  →  published snapshot at a timestamp
 ```
 
@@ -26,35 +27,61 @@ over it.
   published_at <= ts ORDER BY key, published_at DESC` per artifact kind —
   identically for decisions, expressions, and eval snapshots.
 - **Snapshot cache** keys on a `(max(updated_at), count)` fingerprint per
-  revision; publishing inserts rows, which bumps the fingerprint and
-  invalidates the cached loader with no explicit eviction.
+  `(revision, env)`; publishing or promoting inserts rows, which bumps the
+  fingerprint and invalidates the cached loader with no explicit eviction.
+
+## Environment lanes
+
+Every artifact row and publication carries `env ∈ {dev, qa, uat, prod}`
+(MPE-153). Lanes are independent append-only histories — resolution is always
+scoped to one lane.
+
+- **dev is the working lane.** All drafts live here (PUT handlers never write
+  another lane), `POST /api/publications` publishes dev drafts, and
+  latest-published resolution fills never-published keys from drafts **only
+  in dev** — draft content can never resolve in qa/uat/prod.
+- **qa/uat/prod** hold `status='published'` rows only, written exclusively by
+  `POST /api/admin/promotions {from, to, label}`: a single transaction that
+  copies each source-lane latest-published row whose content differs from the
+  target lane's latest into a new immutable row, stamped with the target
+  lane and a new publication. Adjacency is enforced — `dev→qa→uat→prod`, no
+  skips or reversals (`400`), and an empty delta is a `409` like an empty
+  publish. Promotions audit as `promotion.create` and draw the mutation
+  rate-limit bucket.
+- **Evaluation** takes `env` (omitted = `dev`): `POST /api/evaluate/*`
+  `{loan, env?, asOf?}`. `asOf="draft"` always resolves the dev lane. Each
+  `role_grants` row may carry `envs TEXT[]` limiting which lanes that
+  principal may evaluate; `NULL` (the default, and every pre-existing grant)
+  is unrestricted. A principal whose grants permit only some lanes gets `403`
+  outside them.
 
 ## Endpoints
 
 | Route | Purpose |
 |---|---|
-| `GET /api/decisions[?asOf=]` | Draft list, or published snapshot at `asOf` |
+| `GET /api/decisions[?asOf=&env=]` | Draft list, or published snapshot at `asOf` |
 | `GET /api/decisions/{key}` | `{draft, published, history[]}` |
 | `PUT /api/decisions/{key}` | Upsert draft (`{kind, productCode?, jdm}`; JDM validated) |
 | `DELETE /api/decisions/{key}` | Delete draft only |
-| `GET /api/expressions[?asOf=]` | Draft list, or published snapshot at `asOf` |
+| `GET /api/expressions[?asOf=&env=]` | Draft list, or published snapshot at `asOf` |
 | `GET /api/expressions/{key}` | `{draft, published, history[]}` |
 | `PUT /api/expressions/{key}` | Upsert draft (`{kind?, description?, expression}`; ZEN compile-checked) |
 | `DELETE /api/expressions/{key}` | Delete draft only |
-| `GET /api/matrices[?asOf=]` | Draft list, or published snapshot at `asOf` |
+| `GET /api/matrices[?asOf=&env=]` | Draft list, or published snapshot at `asOf` |
 | `GET /api/matrices/{key}` | `{draft, published, history[]}` |
 | `PUT /api/matrices/{key}` | Upsert draft (`{kind?, productCode?, spec}`; spec validated + compiled to JDM at write) |
 | `DELETE /api/matrices/{key}` | Delete draft only |
 | `POST /api/simulate/matrix` | `{spec, context}` → `{result, cells[]}` editor preview with per-cell match detail |
-| `GET /api/rate-sheets[?asOf=]` | Draft list, or published snapshot at `asOf` |
+| `GET /api/rate-sheets[?asOf=&env=]` | Draft list, or published snapshot at `asOf` |
 | `GET /api/rate-sheets/{key}` | `{draft, published, history[]}` (`key` = product code) |
 | `PUT /api/rate-sheets/{key}` | Upsert draft (`{spec}`; spec validated) |
 | `DELETE /api/rate-sheets/{key}` | Delete draft only |
-| `POST /api/evaluate/eligibility` | `{loan, asOf?, trace?}` → per-product `eligible`/`reasons` buckets |
-| `POST /api/evaluate/pricing` | `{loan, products[], rate?, lockTermDays?, asOf?, trace?}` → per-rate lines + LLPA waterfall |
-| `GET /api/publications` | Publications with artifact counts |
-| `GET /api/publications/{id}` | Publication detail + stamped keys |
-| `POST /api/publications` | `{label}` → atomic publish → `201` or `409` |
+| `POST /api/evaluate/eligibility` | `{loan, env?, asOf?, trace?}` → per-product `eligible`/`reasons` buckets |
+| `POST /api/evaluate/pricing` | `{loan, products[], rate?, lockTermDays?, asOf?, env?, trace?}` → per-rate lines + LLPA waterfall |
+| `GET /api/publications` | Publications with artifact counts + `env` |
+| `GET /api/publications/{id}` | Publication detail + stamped keys + `env` |
+| `POST /api/publications` | `{label}` → atomic dev publish → `201` or `409` |
+| `POST /api/admin/promotions` | `{from, to, label}` → adjacent-lane promote → `201`/`400`/`409` |
 
 ## Matrices
 
@@ -140,8 +167,9 @@ Matrix axis expressions can't call `decisionNode` — they're plain ZEN
 compiled at save time — so matrices don't reference named expressions
 directly; wrap the matrix in a decision graph that evaluates them.
 
-## Evaluation revisions (unchanged)
+## Evaluation revisions
 
 `POST /api/evaluate/eligibility` accepts `asOf`: omitted = latest published
-(with draft fallback for keys never published — dev ergonomics), `"draft"` =
-drafts only (editor preview), RFC3339 = historic published snapshot.
+(with draft fallback for keys never published — dev-lane ergonomics),
+`"draft"` = dev drafts only (editor preview), RFC3339 = historic published
+snapshot within the request's `env` lane.

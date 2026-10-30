@@ -37,6 +37,7 @@ pub mod action {
     pub const GRANT_DELETE: &str = "grant.delete";
     pub const RATE_INDEX_IMPORT: &str = "rate_index.import";
     pub const PRODUCT_RATE_CONFIG_PUT: &str = "product.rate_config.put";
+    pub const PROMOTION_CREATE: &str = "promotion.create";
 }
 
 /// Attribution for an event, derived from the request's `Principal`.

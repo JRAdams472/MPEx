@@ -48,9 +48,18 @@ impl Role {
 /// `("sub", sub)`, `("email", email)` (dex static users identify by email;
 /// `sub` is an opaque encoded id), and `("aud", client_id)` for each
 /// audience (client-credentials tokens identify by client_id in `aud`).
+/// One grant-resolution pass: roles plus the environment lanes those
+/// grants permit (MPE-153). `envs = None` means unrestricted — any grant
+/// with NULL envs unlocks every lane.
+#[derive(Debug, Clone)]
+pub struct Resolution {
+    pub roles: HashSet<Role>,
+    pub envs: Option<HashSet<String>>,
+}
+
 pub struct RoleResolver {
     pool: PgPool,
-    cache: Mutex<HashMap<String, (HashSet<Role>, Instant)>>,
+    cache: Mutex<HashMap<String, (Resolution, Instant)>>,
 }
 
 const CACHE_TTL: Duration = Duration::from_secs(60);
@@ -65,7 +74,7 @@ impl RoleResolver {
 
     /// `keys` are `(subject_type, subject)` pairs matching the
     /// `role_grants.subject_type` vocabulary ('sub' | 'email' | 'aud').
-    pub async fn roles_for(&self, keys: &[(String, String)]) -> Result<HashSet<Role>, sqlx::Error> {
+    pub async fn resolve(&self, keys: &[(String, String)]) -> Result<Resolution, sqlx::Error> {
         let cache_key = keys
             .iter()
             .map(|(t, s)| format!("{t}\u{1e}{s}"))
@@ -73,17 +82,17 @@ impl RoleResolver {
             .join("\u{1f}");
         {
             let cache = self.cache.lock().await;
-            if let Some((roles, at)) = cache.get(&cache_key) {
+            if let Some((res, at)) = cache.get(&cache_key) {
                 if at.elapsed() < CACHE_TTL {
-                    return Ok(roles.clone());
+                    return Ok(res.clone());
                 }
             }
         }
 
         let types: Vec<&str> = keys.iter().map(|(t, _)| t.as_str()).collect();
         let subjects: Vec<&str> = keys.iter().map(|(_, s)| s.as_str()).collect();
-        let rows: Vec<String> = sqlx::query_scalar(
-            "SELECT role FROM role_grants
+        let rows: Vec<(String, Option<Vec<String>>)> = sqlx::query_as(
+            "SELECT role, envs FROM role_grants
              WHERE (subject_type, subject) IN
                    (SELECT * FROM unnest($1::text[], $2::text[]))",
         )
@@ -91,13 +100,28 @@ impl RoleResolver {
         .bind(&subjects)
         .fetch_all(&self.pool)
         .await?;
-        let roles: HashSet<Role> = rows.iter().filter_map(|r| Role::parse(r)).collect();
+        let roles: HashSet<Role> = rows.iter().filter_map(|(r, _)| Role::parse(r)).collect();
+        // Unrestricted if any grant leaves envs NULL; otherwise the union.
+        let envs = if rows.is_empty() || rows.iter().any(|(_, e)| e.is_none()) {
+            None
+        } else {
+            Some(
+                rows.iter()
+                    .flat_map(|(_, e)| e.iter().flatten().cloned())
+                    .collect(),
+            )
+        };
 
+        let res = Resolution { roles, envs };
         self.cache
             .lock()
             .await
-            .insert(cache_key, (roles.clone(), Instant::now()));
-        Ok(roles)
+            .insert(cache_key, (res.clone(), Instant::now()));
+        Ok(res)
+    }
+
+    pub async fn roles_for(&self, keys: &[(String, String)]) -> Result<HashSet<Role>, sqlx::Error> {
+        Ok(self.resolve(keys).await?.roles)
     }
 
     /// Drop every cached resolution — grant mutations call this post-commit

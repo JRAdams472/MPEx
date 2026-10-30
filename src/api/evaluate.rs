@@ -6,10 +6,39 @@ use serde_json::{json, Value};
 use zen_engine::DecisionEngine;
 
 use crate::api::AppState;
+use crate::auth::Principal;
 use crate::domain::loan::LoanScenario;
 use crate::error::AppError;
 use crate::pricing::eligibility::{evaluate_eligibility, EvalRevision};
 use crate::pricing::pipeline::{evaluate_pricing, PricingParams};
+use crate::rules::loader::{Env, Revision};
+
+/// Resolve the request's `env` selector and enforce the principal's
+/// permitted lanes (MPE-153). Omitted env = dev, the working lane; `Draft`
+/// revisions always resolve dev (drafts exist nowhere else). Principals
+/// with `permitted_envs` set get 403 outside their lanes.
+fn resolve_env(
+    env: Option<&str>,
+    revision: Revision,
+    principal: &Principal,
+) -> Result<Env, AppError> {
+    let env = if revision == Revision::Draft {
+        Env::Dev
+    } else {
+        env.map(|e| Env::parse(e).ok_or_else(|| AppError::BadRequest(format!("unknown env {e:?}"))))
+            .transpose()?
+            .unwrap_or(Env::Dev)
+    };
+    if let Some(permitted) = &principal.permitted_envs {
+        if !permitted.contains(env.as_str()) {
+            return Err(AppError::Forbidden(format!(
+                "environment '{}' is outside your permitted lanes",
+                env.as_str()
+            )));
+        }
+    }
+    Ok(env)
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,12 +47,16 @@ pub struct EvaluateRequest {
     /// Revision selector: omitted = latest published (draft fallback),
     /// "draft", or an RFC3339 timestamp for historic evaluation.
     pub as_of: Option<String>,
+    /// Environment lane: omitted = "dev" (the working lane). Only consulted
+    /// for published-resolution revisions — "draft" is always the dev lane.
+    pub env: Option<String>,
     #[serde(default)]
     pub trace: bool,
 }
 
 pub async fn eligibility(
     State(state): State<AppState>,
+    principal: Principal,
     Json(req): Json<EvaluateRequest>,
 ) -> Result<Json<Value>, AppError> {
     // PII guard before the model parse: reject personal-data fields/values
@@ -32,12 +65,17 @@ pub async fn eligibility(
     LoanScenario::parse(&req.loan)
         .map_err(|e| AppError::BadRequest(format!("invalid loan model: {e}")))?;
     let revision = EvalRevision::parse(req.as_of.as_deref())?;
+    let env = resolve_env(
+        req.env.as_deref(),
+        revision.to_loader_revision(),
+        &principal,
+    )?;
 
     // Resolve the full decision snapshot on the async runtime; evaluation
     // threads then run pure (no DB I/O inside the engine).
     let loader = state
         .snapshots
-        .loader_for(revision.to_loader_revision())
+        .loader_for(revision.to_loader_revision(), env)
         .await
         .map_err(AppError::Internal)?;
     let engine = DecisionEngine::default().with_loader(loader);
@@ -60,6 +98,8 @@ pub struct PricingRequest {
     /// sheet's shortest term.
     pub lock_term_days: Option<u32>,
     pub as_of: Option<String>,
+    /// Environment lane: omitted = "dev"; ignored for revision "draft".
+    pub env: Option<String>,
     #[serde(default)]
     pub trace: bool,
 }
@@ -70,15 +110,21 @@ pub struct PricingRequest {
 /// fingerprint so stale entries never serve.
 pub async fn pricing(
     State(state): State<AppState>,
+    principal: Principal,
     Json(req): Json<PricingRequest>,
 ) -> Result<Json<Value>, AppError> {
     crate::security::pii_guard::check_loan(&req.loan)?;
     LoanScenario::parse(&req.loan)
         .map_err(|e| AppError::BadRequest(format!("invalid loan model: {e}")))?;
     let revision = EvalRevision::parse(req.as_of.as_deref())?;
+    let env = resolve_env(
+        req.env.as_deref(),
+        revision.to_loader_revision(),
+        &principal,
+    )?;
     let snapshot = state
         .snapshots
-        .snapshot_for(revision.to_loader_revision())
+        .snapshot_for(revision.to_loader_revision(), env)
         .await
         .map_err(AppError::Internal)?;
 

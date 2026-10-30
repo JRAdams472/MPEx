@@ -6,7 +6,7 @@ use sqlx::PgPool;
 use zen_engine::loader::{CachedLoader, DecisionLoader, DynamicLoader, MemoryLoader};
 use zen_engine::model::DecisionContent;
 
-use crate::rules::loader::Revision;
+use crate::rules::loader::{Env, Revision};
 
 /// Matrix identity needed by pricing: which matrices apply to a product.
 #[derive(Debug, Clone)]
@@ -53,22 +53,36 @@ impl SnapshotStore {
         }
     }
 
-    /// Resolve + (possibly) cache the loader for a revision.
+    /// Resolve + (possibly) cache the loader for a revision within an
+    /// environment lane.
     pub async fn loader_for(
         &self,
         revision: Revision,
+        env: Env,
     ) -> Result<Arc<dyn DecisionLoader>, anyhow::Error> {
-        Ok(self.snapshot_for(revision).await?.loader.clone())
+        Ok(self.snapshot_for(revision, env).await?.loader.clone())
     }
 
     /// Resolve the full snapshot (loader + rate sheets + matrix metadata).
+    /// `revision` and `env` are independent selectors: `Draft` always means
+    /// the dev working set (drafts exist only in dev), so its lane is
+    /// forced to dev here regardless of `env`.
     #[tracing::instrument(
         name = "snapshot.resolve",
         skip(self),
-        fields(revision = ?revision, cache_hit = tracing::field::Empty)
+        fields(revision = ?revision, env = env.as_str(), cache_hit = tracing::field::Empty)
     )]
-    pub async fn snapshot_for(&self, revision: Revision) -> Result<Arc<Snapshot>, anyhow::Error> {
-        let cache_key = self.fingerprint(revision).await?;
+    pub async fn snapshot_for(
+        &self,
+        revision: Revision,
+        env: Env,
+    ) -> Result<Arc<Snapshot>, anyhow::Error> {
+        let env = if revision == Revision::Draft {
+            Env::Dev
+        } else {
+            env
+        };
+        let cache_key = self.fingerprint(revision, env).await?;
         let cache_hit = self
             .cache
             .read()
@@ -78,7 +92,7 @@ impl SnapshotStore {
         if let Some(snapshot) = cache_hit {
             return Ok(snapshot);
         }
-        let snapshot = self.build(revision, cache_key.clone()).await?;
+        let snapshot = self.build(revision, env, cache_key.clone()).await?;
         if let Ok(mut cache) = self.cache.write() {
             cache.insert(cache_key, snapshot.clone());
         }
@@ -103,38 +117,43 @@ impl SnapshotStore {
     /// Latest-published and draft fingerprints can change; asOf snapshots are
     /// immutable by definition so their key is the timestamp itself. The
     /// fingerprint covers every loaded artifact kind.
-    async fn fingerprint(&self, revision: Revision) -> anyhow::Result<String> {
+    async fn fingerprint(&self, revision: Revision, env: Env) -> anyhow::Result<String> {
         match revision {
-            Revision::AsOf(ts) => Ok(format!("asof:{}", ts.to_rfc3339())),
+            Revision::AsOf(ts) => Ok(format!("asof:{}:{}", env.as_str(), ts.to_rfc3339())),
             Revision::Draft | Revision::LatestPublished => {
-                let published = self.status_fingerprint("published").await?;
-                // Latest also falls back to drafts for keys lacking a
-                // published revision, so its fingerprint covers both sets.
-                let draft = if revision == Revision::LatestPublished {
-                    self.status_fingerprint("draft").await?
+                let published = self.status_fingerprint("published", env).await?;
+                // Drafts affect a snapshot when it resolves them: always for
+                // Draft (also fixes draft-edit cache invalidation), and for
+                // Latest's draft-fill — which only runs in the dev lane.
+                let draft = if revision == Revision::Draft
+                    || (revision == Revision::LatestPublished && env == Env::Dev)
+                {
+                    self.status_fingerprint("draft", env).await?
                 } else {
                     String::new()
                 };
-                Ok(format!("{revision:?}:{published}:{draft}"))
+                Ok(format!("{revision:?}:{}:{published}:{draft}", env.as_str()))
             }
         }
     }
 
-    /// `max(updated_at):count` per artifact table at one status, in one query.
+    /// `max(updated_at):count` per artifact table at one status and env lane,
+    /// in one query.
     #[tracing::instrument(name = "snapshot.fingerprint", skip(self))]
-    async fn status_fingerprint(&self, status: &str) -> anyhow::Result<String> {
+    async fn status_fingerprint(&self, status: &str, env: Env) -> anyhow::Result<String> {
         let rows: Vec<(String, Option<chrono::DateTime<chrono::Utc>>, i64)> = sqlx::query_as(
             "SELECT t, max(updated_at), count(*) FROM (
-               SELECT 'decisions' AS t, updated_at FROM decisions WHERE status = $1
+               SELECT 'decisions' AS t, updated_at FROM decisions WHERE status = $1 AND env = $2
                UNION ALL
-               SELECT 'expressions', updated_at FROM expressions WHERE status = $1
+               SELECT 'expressions', updated_at FROM expressions WHERE status = $1 AND env = $2
                UNION ALL
-               SELECT 'matrices', updated_at FROM matrices WHERE status = $1
+               SELECT 'matrices', updated_at FROM matrices WHERE status = $1 AND env = $2
                UNION ALL
-               SELECT 'rate_sheets', updated_at FROM rate_sheets WHERE status = $1
+               SELECT 'rate_sheets', updated_at FROM rate_sheets WHERE status = $1 AND env = $2
              ) s GROUP BY t ORDER BY t",
         )
         .bind(status)
+        .bind(env.as_str())
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
@@ -158,22 +177,26 @@ impl SnapshotStore {
     async fn build(
         &self,
         revision: Revision,
+        env: Env,
         fingerprint: String,
     ) -> anyhow::Result<Arc<Snapshot>> {
-        // Each kind resolves DISTINCT ON (key) the same way; kinds merge with
-        // decisions taking precedence over matrices on a key collision (keys
-        // are namespaced by convention, e.g. eligibility.X / llpa.X).
+        // Each kind resolves DISTINCT ON (key) within one env lane; kinds
+        // merge with decisions taking precedence over matrices on a key
+        // collision (keys are namespaced, e.g. eligibility.X / llpa.X).
+        // `$1 = 'dev'` in every draft branch makes draft-fill a no-op outside
+        // the dev lane — drafts can never resolve in qa/uat/prod.
         let rows: Vec<(String, serde_json::Value)> = match revision {
             Revision::Draft => {
                 sqlx::query_as(
                     "SELECT DISTINCT ON (key) key, jdm FROM (
                        (SELECT DISTINCT ON (key) key, jdm, 0 AS prio FROM decisions
-                        WHERE status = 'draft' ORDER BY key, updated_at DESC)
+                        WHERE status = 'draft' AND env = $1 ORDER BY key, updated_at DESC)
                        UNION ALL
                        (SELECT DISTINCT ON (key) key, jdm, 1 AS prio FROM matrices
-                        WHERE status = 'draft' ORDER BY key, updated_at DESC)
+                        WHERE status = 'draft' AND env = $1 ORDER BY key, updated_at DESC)
                      ) t ORDER BY key, prio",
                 )
+                .bind(env.as_str())
                 .fetch_all(&self.pool)
                 .await?
             }
@@ -181,39 +204,46 @@ impl SnapshotStore {
                 sqlx::query_as(
                     "SELECT DISTINCT ON (key) key, jdm FROM (
                        (SELECT DISTINCT ON (key) key, jdm, 0 AS prio FROM decisions
-                        WHERE status = 'published' AND published_at <= $1
+                        WHERE status = 'published' AND env = $2 AND published_at <= $1
                         ORDER BY key, published_at DESC)
                        UNION ALL
                        (SELECT DISTINCT ON (key) key, jdm, 1 AS prio FROM matrices
-                        WHERE status = 'published' AND published_at <= $1
+                        WHERE status = 'published' AND env = $2 AND published_at <= $1
                         ORDER BY key, published_at DESC)
                      ) t ORDER BY key, prio",
                 )
                 .bind(ts)
+                .bind(env.as_str())
                 .fetch_all(&self.pool)
                 .await?
             }
             Revision::LatestPublished => {
-                // Latest published per key; draft fills keys with no published
-                // row (pre-publish dev ergonomics).
+                // Latest published per key in this lane; dev drafts fill keys
+                // with no published row — gated to `$1 = 'dev'` so drafts
+                // never leak into qa/uat/prod.
                 sqlx::query_as(
                     "WITH pub AS (
                        SELECT DISTINCT ON (key) key, jdm, 0 AS prio FROM (
-                         SELECT key, jdm, published_at FROM decisions WHERE status = 'published'
+                         SELECT key, jdm, published_at FROM decisions
+                         WHERE status = 'published' AND env = $1
                          UNION ALL
-                         SELECT key, jdm, published_at FROM matrices WHERE status = 'published'
+                         SELECT key, jdm, published_at FROM matrices
+                         WHERE status = 'published' AND env = $1
                        ) a ORDER BY key, published_at DESC
                      ), drf AS (
                        SELECT DISTINCT ON (key) key, jdm, 1 AS prio FROM (
-                         SELECT key, jdm, updated_at FROM decisions WHERE status = 'draft'
+                         SELECT key, jdm, updated_at FROM decisions
+                         WHERE status = 'draft' AND env = $1 AND $1 = 'dev'
                          UNION ALL
-                         SELECT key, jdm, updated_at FROM matrices WHERE status = 'draft'
+                         SELECT key, jdm, updated_at FROM matrices
+                         WHERE status = 'draft' AND env = $1 AND $1 = 'dev'
                        ) a ORDER BY key, updated_at DESC
                      )
                      SELECT DISTINCT ON (key) key, jdm FROM (
                        SELECT * FROM pub UNION ALL SELECT * FROM drf
                      ) t ORDER BY key, prio",
                 )
+                .bind(env.as_str())
                 .fetch_all(&self.pool)
                 .await?
             }
@@ -232,18 +262,20 @@ impl SnapshotStore {
             Revision::Draft => {
                 sqlx::query_as(
                     "SELECT DISTINCT ON (key) key, spec FROM rate_sheets
-                     WHERE status = 'draft' ORDER BY key, updated_at DESC",
+                     WHERE status = 'draft' AND env = $1 ORDER BY key, updated_at DESC",
                 )
+                .bind(env.as_str())
                 .fetch_all(&self.pool)
                 .await?
             }
             Revision::AsOf(ts) => {
                 sqlx::query_as(
                     "SELECT DISTINCT ON (key) key, spec FROM rate_sheets
-                     WHERE status = 'published' AND published_at <= $1
+                     WHERE status = 'published' AND env = $2 AND published_at <= $1
                      ORDER BY key, published_at DESC",
                 )
                 .bind(ts)
+                .bind(env.as_str())
                 .fetch_all(&self.pool)
                 .await?
             }
@@ -251,15 +283,17 @@ impl SnapshotStore {
                 sqlx::query_as(
                     "WITH pub AS (
                        SELECT DISTINCT ON (key) key, spec, 0 AS prio FROM rate_sheets
-                       WHERE status = 'published' ORDER BY key, published_at DESC
+                       WHERE status = 'published' AND env = $1 ORDER BY key, published_at DESC
                      ), drf AS (
                        SELECT DISTINCT ON (key) key, spec, 1 AS prio FROM rate_sheets
-                       WHERE status = 'draft' ORDER BY key, updated_at DESC
+                       WHERE status = 'draft' AND env = $1 AND $1 = 'dev'
+                       ORDER BY key, updated_at DESC
                      )
                      SELECT DISTINCT ON (key) key, spec FROM (
                        SELECT * FROM pub UNION ALL SELECT * FROM drf
                      ) t ORDER BY key, prio",
                 )
+                .bind(env.as_str())
                 .fetch_all(&self.pool)
                 .await?
             }
@@ -270,18 +304,20 @@ impl SnapshotStore {
             Revision::Draft => {
                 sqlx::query_as(
                     "SELECT DISTINCT ON (key) key, kind, product_code FROM matrices
-                     WHERE status = 'draft' ORDER BY key, updated_at DESC",
+                     WHERE status = 'draft' AND env = $1 ORDER BY key, updated_at DESC",
                 )
+                .bind(env.as_str())
                 .fetch_all(&self.pool)
                 .await?
             }
             Revision::AsOf(ts) => {
                 sqlx::query_as(
                     "SELECT DISTINCT ON (key) key, kind, product_code FROM matrices
-                     WHERE status = 'published' AND published_at <= $1
+                     WHERE status = 'published' AND env = $2 AND published_at <= $1
                      ORDER BY key, published_at DESC",
                 )
                 .bind(ts)
+                .bind(env.as_str())
                 .fetch_all(&self.pool)
                 .await?
             }
@@ -289,17 +325,18 @@ impl SnapshotStore {
                 sqlx::query_as(
                     "WITH pub AS (
                        SELECT DISTINCT ON (key) key, kind, product_code, 0 AS prio
-                       FROM matrices WHERE status = 'published'
+                       FROM matrices WHERE status = 'published' AND env = $1
                        ORDER BY key, published_at DESC
                      ), drf AS (
                        SELECT DISTINCT ON (key) key, kind, product_code, 1 AS prio
-                       FROM matrices WHERE status = 'draft'
+                       FROM matrices WHERE status = 'draft' AND env = $1 AND $1 = 'dev'
                        ORDER BY key, updated_at DESC
                      )
                      SELECT DISTINCT ON (key) key, kind, product_code FROM (
                        SELECT * FROM pub UNION ALL SELECT * FROM drf
                      ) t ORDER BY key, prio",
                 )
+                .bind(env.as_str())
                 .fetch_all(&self.pool)
                 .await?
             }
@@ -321,18 +358,20 @@ impl SnapshotStore {
             Revision::Draft => {
                 sqlx::query_as(
                     "SELECT DISTINCT ON (key) key, kind, expression FROM expressions
-                     WHERE status = 'draft' ORDER BY key, updated_at DESC",
+                     WHERE status = 'draft' AND env = $1 ORDER BY key, updated_at DESC",
                 )
+                .bind(env.as_str())
                 .fetch_all(&self.pool)
                 .await?
             }
             Revision::AsOf(ts) => {
                 sqlx::query_as(
                     "SELECT DISTINCT ON (key) key, kind, expression FROM expressions
-                     WHERE status = 'published' AND published_at <= $1
+                     WHERE status = 'published' AND env = $2 AND published_at <= $1
                      ORDER BY key, published_at DESC",
                 )
                 .bind(ts)
+                .bind(env.as_str())
                 .fetch_all(&self.pool)
                 .await?
             }
@@ -340,17 +379,18 @@ impl SnapshotStore {
                 sqlx::query_as(
                     "WITH pub AS (
                        SELECT DISTINCT ON (key) key, kind, expression, 0 AS prio
-                       FROM expressions WHERE status = 'published'
+                       FROM expressions WHERE status = 'published' AND env = $1
                        ORDER BY key, published_at DESC
                      ), drf AS (
                        SELECT DISTINCT ON (key) key, kind, expression, 1 AS prio
-                       FROM expressions WHERE status = 'draft'
+                       FROM expressions WHERE status = 'draft' AND env = $1 AND $1 = 'dev'
                        ORDER BY key, updated_at DESC
                      )
                      SELECT DISTINCT ON (key) key, kind, expression FROM (
                        SELECT * FROM pub UNION ALL SELECT * FROM drf
                      ) t ORDER BY key, prio",
                 )
+                .bind(env.as_str())
                 .fetch_all(&self.pool)
                 .await?
             }

@@ -28,6 +28,11 @@ mortgage product eligibility and pricing. Rules are metadata-driven and executed
 - **Idempotent evaluation**: `POST /api/evaluate/eligibility` and `POST /api/evaluate/pricing`
   take the full loan model in the request body and need no external data beyond the resolved
   publication snapshot.
+- **Environment lanes**: artifacts and publications carry `env` (`dev`/`qa`/`uat`/`prod`).
+  Drafts and publishes stay in `dev`; `POST /api/admin/promotions` copies changed artifacts
+  one lane forward (`dev→qa→uat→prod`, audited, atomic). Eval requests select a lane with
+  `env` (default `dev`), and `role_grants.envs` can restrict which lanes a principal may
+  evaluate.
 
 ## Stack
 
@@ -64,7 +69,9 @@ Web UI: http://localhost:3000 · API: http://localhost:8080 (`/healthz`, `/api/h
   in an httpOnly session cookie), services use client-credentials
   (`mpex-svc`, `mpex-ci`). Admins manage grants via
   `GET`/`PUT /api/admin/grants` and `DELETE /api/admin/grants/{id}` —
-  audited, with self-revoke and last-admin lockout guards.
+  audited, with self-revoke and last-admin lockout guards. A grant may list
+  `envs` to restrict which environment lanes the principal can evaluate
+  (`NULL` = all lanes).
 - **Audit**: sensitive mutations and authenticated 403 denials append
   hash-chained `audit_events` rows inside the mutation's transaction —
   tamper-evident and append-only at the storage layer. Admins read it via
@@ -143,7 +150,9 @@ with decision traces and the per-line LLPA waterfall) plus Playwright e2e and
 determinism/concurrency tests (`tests/hardening.rs`).
 
 `POST /api/publications` atomically publishes changed drafts under a named
-publication; `asOf` resolves point-in-time snapshots; matrix specs compile to
-Zen decision tables; `POST /api/evaluate/pricing` returns per-rate pricing
-lines with an LLPA waterfall per line. See `docs/rules-versioning.md`.
+publication; `POST /api/admin/promotions` advances them through
+`dev→qa→uat→prod` lanes; `asOf` resolves point-in-time snapshots; matrix
+specs compile to Zen decision tables; `POST /api/evaluate/pricing` returns
+per-rate pricing lines with an LLPA waterfall per line. See
+`docs/rules-versioning.md`.
 See Linear team **MPE** for the phased plan.
