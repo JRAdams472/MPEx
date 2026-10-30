@@ -125,6 +125,8 @@ export interface RateIndexImportRow {
   fetchedAt: string;
   sourceUrl: string;
   contentHash: string;
+  /** Resolved index rates keyed by index label (e.g. "30 Yr. Fixed"). */
+  rates: Record<string, number>;
   importedBy: string;
   publicationId: string | null;
   createdAt: string;
