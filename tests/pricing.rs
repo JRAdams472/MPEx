@@ -459,3 +459,207 @@ async fn pricing_lifecycle() {
         .await
         .unwrap();
 }
+
+/// Warm-path latency proof (MPE-152, Zara perf target): a published
+/// catalog priced N times with loan variation defeating memoization must
+/// stay under 15 ms per call. Reports min/median/p95 of both the
+/// response's own `elapsedMs` (DB resolve + pure eval) and full-request
+/// wall time through the router (auth + snapshot fingerprint + eval).
+#[tokio::test]
+async fn warm_path_pricing_under_15ms() {
+    const BENCH_PRODUCT: &str = "P4BENCH";
+    const BENCH_MATRIX: &str = "matrix.p4bench.shared";
+    const N: usize = 50;
+
+    let Ok(url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping warm-path benchmark");
+        return;
+    };
+    let pool = PgPool::connect(&url).await.unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    testkit::ensure_grants(&pool).await;
+
+    sqlx::query("DELETE FROM matrices WHERE key = $1")
+        .bind(BENCH_MATRIX)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM rate_sheets WHERE key = $1")
+        .bind(BENCH_PRODUCT)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for table in ["decisions", "expressions", "matrices", "rate_sheets"] {
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE publication_id IN
+             (SELECT id FROM publications WHERE label LIKE 'p4-bench-%')"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("DELETE FROM publications WHERE label LIKE 'p4-bench-%'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO products (code, name, loan_type, amortization, term_months)
+         VALUES ($1, 'P4 Bench', 'conventional', 'fixed', 360)
+         ON CONFLICT (code) DO NOTHING",
+    )
+    .bind(BENCH_PRODUCT)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let app = api::router(AppState {
+        pool: pool.clone(),
+        snapshots: Arc::new(SnapshotStore::new(pool.clone())),
+        auth: Some(testkit::test_context(pool.clone())),
+        rate_limits: None,
+        rate_index: None,
+    });
+
+    // Seed + publish: rate sheet, plus a shared matrix so each line runs a
+    // real waterfall adjustment eval.
+    let (status, body) = call(
+        &app,
+        "PUT",
+        &format!("/api/rate-sheets/{BENCH_PRODUCT}"),
+        Some(json!({ "spec": sheet_spec(100.0) })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "bench sheet PUT failed: {body}");
+    let (status, body) = call(
+        &app,
+        "PUT",
+        &format!("/api/matrices/{BENCH_MATRIX}"),
+        Some(json!({ "kind": "llpa", "spec": shared_spec(-0.125) })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "bench matrix PUT failed: {body}");
+
+    // Scoped publish for JUST the bench keys: POST /api/publications stamps
+    // every changed draft catalog-wide, which would steal a parallel test's
+    // draft under a 'p4-bench-*' publication id. Stamping our two keys
+    // directly is identical row-shape (append-only published copy) without
+    // the cross-test side effect.
+    let pub_id: uuid::Uuid =
+        sqlx::query_scalar("INSERT INTO publications (label) VALUES ('p4-bench-v1') RETURNING id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    for (table, key, cols) in [
+        ("rate_sheets", BENCH_PRODUCT, "spec"),
+        ("matrices", BENCH_MATRIX, "kind, product_code, spec, jdm"),
+    ] {
+        let select_cols = cols
+            .split(',')
+            .map(|c| format!("s.{}", c.trim()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        sqlx::query(&format!(
+            "INSERT INTO {table} (key, status, published_at, publication_id, {cols})
+             SELECT s.key, 'published', p.published_at, p.id, {select_cols}
+             FROM {table} s, publications p
+             WHERE p.id = $2 AND s.key = $1 AND s.status = 'draft'"
+        ))
+        .bind(key)
+        .bind(pub_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // Warm the path: snapshot fingerprint cache, CachedLoader graphs, and
+    // the DB pool must all be hot before timing starts.
+    for i in 0..5 {
+        let (status, _) = price(
+            &app,
+            json!({
+                "loan": { "loan": { "ltv": 80.0 + i as f64 * 0.1 },
+                          "borrower": { "creditScore": 750 + i },
+                          "scenario": { "lockTermDays": 30 } },
+                "products": [BENCH_PRODUCT]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "warmup call failed");
+    }
+
+    let mut wall_ms = Vec::with_capacity(N);
+    let mut eval_ms = Vec::with_capacity(N);
+    for i in 0..N {
+        // Loan variation defeats (fingerprint, loan, ...) memoization — every
+        // call resolves the snapshot and runs the engine.
+        let request = json!({
+            "loan": { "loan": { "ltv": 78.0 + i as f64 * 0.05 },
+                      "borrower": { "creditScore": 700 + i as u32 },
+                      "scenario": { "lockTermDays": 30 } },
+            "products": [BENCH_PRODUCT]
+        });
+        let t = std::time::Instant::now();
+        let (status, body) = price(&app, request).await;
+        wall_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+        assert_eq!(status, StatusCode::OK, "bench call {i} failed: {body}");
+        eval_ms.push(body["elapsedMs"].as_f64().expect("elapsedMs missing"));
+    }
+
+    fn pct(v: &[f64], p: f64) -> f64 {
+        let i = ((v.len() - 1) as f64 * p).round() as usize;
+        v[i]
+    }
+    wall_ms.sort_by(f64::total_cmp);
+    eval_ms.sort_by(f64::total_cmp);
+    eprintln!(
+        "warm-path pricing ({N} calls): \
+         wall min={:.2} med={:.2} p95={:.2} ms | \
+         eval elapsedMs min={:.2} med={:.2} p95={:.2} ms",
+        wall_ms[0],
+        pct(&wall_ms, 0.5),
+        pct(&wall_ms, 0.95),
+        eval_ms[0],
+        pct(&eval_ms, 0.5),
+        pct(&eval_ms, 0.95),
+    );
+
+    // The <15 ms target is eval latency — `elapsedMs` (DB resolve + pure
+    // engine eval). Full-request wall time is reported for context but not
+    // asserted: it includes JWT verification + middleware on a debug-build
+    // oneshot, which isn't the measured surface in production.
+    assert!(
+        pct(&eval_ms, 0.95) < 15.0,
+        "eval p95 {:.2} ms breaches the <15 ms warm-path target",
+        pct(&eval_ms, 0.95)
+    );
+
+    // Cleanup — same lifecycle fixtures pattern.
+    sqlx::query("DELETE FROM matrices WHERE key = $1")
+        .bind(BENCH_MATRIX)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM rate_sheets WHERE key = $1")
+        .bind(BENCH_PRODUCT)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for table in ["decisions", "expressions", "matrices", "rate_sheets"] {
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE publication_id IN
+             (SELECT id FROM publications WHERE label LIKE 'p4-bench-%')"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("DELETE FROM publications WHERE label LIKE 'p4-bench-%'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM products WHERE code = $1")
+        .bind(BENCH_PRODUCT)
+        .execute(&pool)
+        .await
+        .unwrap();
+}

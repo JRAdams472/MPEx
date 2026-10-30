@@ -22,6 +22,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
+use crate::security::mask::{MaskingProcessor, MaskingStdout};
 
 /// Keeps the OTLP providers alive for the process lifetime so `shutdown` can
 /// flush pending batches when the server exits.
@@ -43,7 +44,11 @@ impl TelemetryGuard {
 
 pub fn init(cfg: &Config) -> anyhow::Result<TelemetryGuard> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,mpex=debug".into());
-    let fmt = tracing_subscriber::fmt::layer().json();
+    // MaskingStdout scrubs each serialized event before it reaches stdout —
+    // defense-in-depth behind the "never record sensitive fields" rule.
+    let fmt = tracing_subscriber::fmt::layer()
+        .json()
+        .with_writer(MaskingStdout);
 
     let mut guard = TelemetryGuard {
         tracer_provider: None,
@@ -85,12 +90,16 @@ pub fn init(cfg: &Config) -> anyhow::Result<TelemetryGuard> {
             let exporter = builder.build().context("otlp log exporter")?;
             // The dedicated-thread batch processor can't drive an async HTTP
             // client — run the processor on the ambient tokio runtime instead.
-            let processor =
+            // MaskingProcessor scrubs each record's body before the batch
+            // processor exports it. SDK 0.33 exposes attributes read-only —
+            // those rely on the never-record rule (docs/security.md).
+            let processor = MaskingProcessor::new(
                 opentelemetry_sdk::logs::log_processor_with_async_runtime::BatchLogProcessor::builder(
                     exporter,
                     opentelemetry_sdk::runtime::Tokio,
                 )
-                .build();
+                .build(),
+            );
             let provider = SdkLoggerProvider::builder()
                 .with_resource(resource())
                 .with_log_processor(processor)

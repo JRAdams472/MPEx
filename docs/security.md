@@ -86,8 +86,12 @@ docker exec mpex-seq-1 seqcli apikey create -t mpex-ingest \
 
 - **Rate limits** (per-IP, token bucket): global `RATE_LIMIT_PER_MIN` (default
   120/min) on every request; mutation tier `RATE_LIMIT_MUTATIONS_PER_MIN`
-  (default 30/min) on PUT/DELETE and `POST /api/publications` — eval/simulate
-  POSTs stay on the global tier. 429s carry `Retry-After`.
+  (default 30/min) on PUT/DELETE and the POSTs that write or reach outside
+  (`POST /api/publications`, `POST /api/admin/rate-index/preview`,
+  `POST /api/admin/rate-index/import` — the import mutates, and a preview
+  flood would amplify an external fetch). Eval/simulate POSTs stay on the
+  global tier — compute isn't blocked when mutations exhaust. 429s carry
+  `Retry-After`.
 - **Client IP**: peer address via `ConnectInfo` by default. Behind a proxy,
   set `RATE_LIMIT_TRUST_XFF=1` to key on `X-Forwarded-For` — **only** when the
   proxy overwrites the header, or clients can reset their own bucket.
@@ -126,6 +130,47 @@ email). 400s carry the dotted field path only — values never reach errors or
 logs. Artifacts beyond the loan model stay PII-free by invariant; the guard
 is the enforcement point on the one endpoint family that accepts free-form
 loan data.
+
+## Log masking
+
+`security::mask` is an active scrub layer in front of every log sink —
+defense-in-depth behind the "never record sensitive fields" rule enforced
+at the boundary (PII guard, path-only errors). If a sensitive value slips
+through anyway — a Debug impl, a query string, a credential inside an
+error message — the serialized line is masked before it leaves the
+process. The bias is deliberate over-masking: a scrubbed benign field is a
+nuisance, a leaked secret is an incident.
+
+- **Stdout**: the JSON fmt layer writes through `MaskingStdout`
+  (`telemetry.rs`), buffering each event to the newline before rewriting
+  `"key":"value"` pairs (scalars, nulls, and nested objects included),
+  bare `key=value` / `key: value` forms, DSN passwords
+  (`postgres://user:pass@host`), and value shapes (SSN `\d{3}-\d{2}-\d{4}`,
+  bare 9-digit account numbers, compact JWTs) to `[MASKED]`.
+- **Key matching** mirrors the PII guard's tokenization: the denylisted
+  field names plus credential keys (`password`, `secret`, `token`,
+  `api_key`, `authorization`, `cookie`, …) hit inside camel/snake/kebab
+  compounds (`refreshToken`, `borrower_ssn`, `x-api-key`) while
+  `existingLiens`, `settings`, `filename`, and actor emails pass.
+- **OTLP logs** (Seq): `MaskingProcessor` wraps the batch log processor
+  and masks each record's *body* before export — including Map/List
+  values under sensitive keys. **Caveat**: opentelemetry-sdk 0.33 exposes
+  structured record attributes read-only, so they can't be rewritten at
+  that seam; attributes rely on the never-record guarantee
+  (`tests/pii.rs`). This is the documented residual of the OTLP path.
+- **Traces** carry span metadata only (durations, counts) — no payload
+  fields — so they're not a masking surface.
+
+## Warm-path latency
+
+Zara-parity performance target: warm-path evaluation < 15 ms.
+`tests/pricing.rs`'s `warm_path_pricing_under_15ms` seeds and publishes a
+catalog, then prices 50 requests with loan variation defeating
+memoization. It reports min/median/p95 for the response `elapsedMs`
+(snapshot resolve + pure engine eval) and full-request wall time, and
+asserts the `elapsedMs` p95 stays under 15 ms. Wall time includes JWT
+verification and middleware on a debug build, so it is context, not the
+asserted bound.
 
 ## CI dependency scans
 
