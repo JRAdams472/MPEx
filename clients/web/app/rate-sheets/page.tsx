@@ -34,6 +34,10 @@ import MenuItem from "@mui/material/MenuItem";
 
 import Box from "@mui/material/Box";
 
+import Chip from "@mui/material/Chip";
+
+import Tooltip from "@mui/material/Tooltip";
+
 import Link from "next/link";
 
 import { useRouter } from "next/navigation";
@@ -43,7 +47,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 
-import { endpoints, type RateIndexImport } from "@/lib/api";
+import { endpoints, type RateIndexImport, type RateIndexImportRow } from "@/lib/api";
 
 import StatusChip from "@/components/StatusChip";
 import { useMe } from "@/lib/me";
@@ -64,6 +68,10 @@ export default function RateSheetsPage() {
     queryFn: () => endpoints.rateSheets(),
   });
   const products = useQuery({ queryKey: ["products"], queryFn: endpoints.products });
+  const rateIndex = useQuery({
+    queryKey: ["rateIndex"],
+    queryFn: endpoints.rateIndex,
+  });
 
   const [open, setOpen] = useState(false);
   const [loadOpen, setLoadOpen] = useState(false);
@@ -117,6 +125,9 @@ export default function RateSheetsPage() {
         waterfall adjusts. One sheet per product.
       </Typography>
       {error && <Alert severity="error">{`${error}`}</Alert>}
+      {rateIndex.data && (
+        <LastImportPanel row={rateIndex.data.imports[0] ?? null} />
+      )}
       <TableContainer component={Paper} variant="outlined">
         <Table size="small">
           <TableHead>
@@ -204,9 +215,92 @@ export default function RateSheetsPage() {
         onApplied={async () => {
           await queryClient.invalidateQueries({ queryKey: ["rateSheets"] });
           await queryClient.invalidateQueries({ queryKey: ["publications"] });
+          await queryClient.invalidateQueries({ queryKey: ["rateIndex"] });
         }}
       />
     </>
+  );
+}
+
+/// "Last import" provenance for the MND rate-index (MPE-149) — when the daily
+/// scheduler/manual import last ran, who ran it, the publication it produced,
+/// and the source content hash. Lets admins confirm the scheduler ran and
+/// trace where a sheet's base rate came from.
+function LastImportPanel({ row }: { row: RateIndexImportRow | null }) {
+  const scheduled = row?.importedBy === "rate-index-scheduler";
+  return (
+    <Paper variant="outlined" sx={{ px: 1.5, py: 1, mb: 2 }}>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 1.5,
+          flexWrap: "wrap",
+        }}
+      >
+        <Typography variant="subtitle2">Last import</Typography>
+        {row === null ? (
+          <Typography variant="body2" color="text.secondary">
+            No rate-index imports yet — the daily scheduler has not run.
+          </Typography>
+        ) : (
+          <>
+            <Chip
+              size="small"
+              variant="outlined"
+              color={scheduled ? "info" : "default"}
+              label={scheduled ? "scheduled" : "manual"}
+            />
+            <Typography variant="body2">
+              {new Date(row.fetchedAt).toLocaleString()}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              by {row.importedBy}
+            </Typography>
+            {row.publicationId && (
+              <Typography variant="body2" color="text.secondary">
+                pub{" "}
+                <Link
+                  href="/publications"
+                  style={{ color: "inherit", fontFamily: "monospace" }}
+                >
+                  {row.publicationId.slice(0, 8)}
+                </Link>
+              </Typography>
+            )}
+            <Tooltip title={row.contentHash}>
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ fontFamily: "monospace" }}
+              >
+                sha {row.contentHash.slice(0, 12)}…
+              </Typography>
+            </Tooltip>
+            <Link
+              href={row.sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "inherit", fontSize: "0.875rem" }}
+            >
+              source
+            </Link>
+          </>
+        )}
+      </Box>
+      {row && Object.keys(row.rates).length > 0 && (
+        <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", mt: 0.75 }}>
+          {Object.entries(row.rates).map(([label, r]) => (
+            <Chip
+              key={label}
+              size="small"
+              variant="outlined"
+              label={`${label} ${r}%`}
+            />
+          ))}
+        </Box>
+      )}
+    </Paper>
   );
 }
 
