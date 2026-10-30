@@ -5,6 +5,7 @@ const BFF = "/bff";
 
 function bounceOn401(res: Response) {
   if (res.status === 401 && typeof window !== "undefined") {
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- plain lib code (no useRouter); /auth/login is a route handler, needs a document navigation
     window.location.assign(`/auth/login?next=${encodeURIComponent(window.location.pathname)}`);
   }
 }
