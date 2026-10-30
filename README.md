@@ -67,8 +67,9 @@ Web UI: http://localhost:3000 · API: http://localhost:8080 (`/healthz`, `/api/h
   `role_grants` (typed `sub`/`email`/`aud` subjects). Dev runs Dex in
   compose; humans log in via the web app's auth-code+PKCE BFF (tokens sealed
   in an httpOnly session cookie), services use client-credentials
-  (`mpex-svc`, `mpex-ci`). Admins manage grants via
-  `GET`/`PUT /api/admin/grants` and `DELETE /api/admin/grants/{id}` —
+  (`mpex-svc`, `mpex-ci`). Admins manage grants in the web UI at
+  `/grants` (or via `GET`/`PUT /api/admin/grants` and
+  `DELETE /api/admin/grants/{id}`) —
   audited, with self-revoke and last-admin lockout guards. A grant may list
   `envs` to restrict which environment lanes the principal can evaluate
   (`NULL` = all lanes).
