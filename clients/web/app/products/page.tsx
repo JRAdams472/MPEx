@@ -13,7 +13,16 @@ import Alert from "@mui/material/Alert";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
-import { endpoints } from "@/lib/api";
+import { endpoints, type Product } from "@/lib/api";
+
+function rateSource(p: Product): string {
+  if (p.mndLabel) return `index — ${p.mndLabel}`;
+  if (p.baseProductCode) {
+    const sign = p.rateAdjustment >= 0 ? "+" : "";
+    return `${p.baseProductCode} ${sign}${p.rateAdjustment}`;
+  }
+  return "manual";
+}
 
 export default function ProductsPage() {
   const { data, isLoading, error } = useQuery({
@@ -37,6 +46,7 @@ export default function ProductsPage() {
               <TableCell>Loan type</TableCell>
               <TableCell>Amortization</TableCell>
               <TableCell align="right">Term (mo)</TableCell>
+              <TableCell>Rate source</TableCell>
               <TableCell>Status</TableCell>
             </TableRow>
           </TableHead>
@@ -60,6 +70,11 @@ export default function ProductsPage() {
                 <TableCell>{p.loanType}</TableCell>
                 <TableCell>{p.amortization}</TableCell>
                 <TableCell align="right">{p.termMonths}</TableCell>
+                <TableCell>
+                  <Typography variant="body2" color="text.secondary">
+                    {rateSource(p)}
+                  </Typography>
+                </TableCell>
                 <TableCell>
                   <Chip
                     label={p.active ? "active" : "inactive"}

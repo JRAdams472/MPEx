@@ -43,7 +43,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 
-import { endpoints } from "@/lib/api";
+import { endpoints, type RateIndexImport } from "@/lib/api";
 
 import StatusChip from "@/components/StatusChip";
 import { useMe } from "@/lib/me";
@@ -58,7 +58,7 @@ const STARTER_SPEC = {
 export default function RateSheetsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { canEdit } = useMe();
+  const { canEdit, canPublish } = useMe();
   const { data, isLoading, error } = useQuery({
     queryKey: ["rateSheets"],
     queryFn: () => endpoints.rateSheets(),
@@ -66,6 +66,7 @@ export default function RateSheetsPage() {
   const products = useQuery({ queryKey: ["products"], queryFn: endpoints.products });
 
   const [open, setOpen] = useState(false);
+  const [loadOpen, setLoadOpen] = useState(false);
   const [productCode, setProductCode] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -95,6 +96,16 @@ export default function RateSheetsPage() {
         <Typography variant="h4" component="h1" sx={{ flexGrow: 1 }}>
           Rate sheets
         </Typography>
+        {canPublish && (
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={() => setLoadOpen(true)}
+            sx={{ mr: 1 }}
+          >
+            Load today&rsquo;s rates
+          </Button>
+        )}
         {canEdit && (
           <Button variant="contained" size="small" onClick={() => setOpen(true)}>
             New rate sheet
@@ -186,6 +197,163 @@ export default function RateSheetsPage() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <LoadRatesDialog
+        open={loadOpen}
+        onClose={() => setLoadOpen(false)}
+        onApplied={async () => {
+          await queryClient.invalidateQueries({ queryKey: ["rateSheets"] });
+          await queryClient.invalidateQueries({ queryKey: ["publications"] });
+        }}
+      />
     </>
+  );
+}
+
+/// Preview → apply the daily MND rate-index import. Admin-only (the parent
+/// mounts this only behind `canPublish`). Apply writes single-rate-at-par
+/// drafts and stamps a rate-sheets-only publication.
+function LoadRatesDialog({
+  open,
+  onClose,
+  onApplied,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onApplied: () => Promise<void>;
+}) {
+  const [applied, setApplied] = useState<RateIndexImport | null>(null);
+  const preview = useQuery({
+    queryKey: ["rateIndexPreview"],
+    enabled: open && !applied,
+    retry: false,
+    queryFn: () =>
+      endpoints.previewRateIndex().then(({ status, data }) => {
+        if (status >= 400) {
+          throw new Error(
+            (data as { error?: string }).error ?? `HTTP ${status}`,
+          );
+        }
+        return data;
+      }),
+  });
+  const apply = useMutation({
+    mutationFn: endpoints.importRateIndex,
+    onSuccess: async ({ status, data }) => {
+      if (status >= 400) return;
+      setApplied(data);
+      await onApplied();
+    },
+  });
+  const applyError =
+    apply.data && apply.data.status >= 400
+      ? ((apply.data.data as { error?: string }).error ??
+        `HTTP ${apply.data.status}`)
+      : apply.isError
+        ? `${apply.error}`
+        : null;
+
+  const close = () => {
+    setApplied(null);
+    onClose();
+  };
+
+  return (
+    <Dialog open={open} onClose={close} maxWidth="md" fullWidth>
+      <DialogTitle>Load today&rsquo;s rates — MND index</DialogTitle>
+      <DialogContent>
+        {preview.isLoading && <Typography>Fetching the index…</Typography>}
+        {preview.error && (
+          <Alert severity="error">{`${preview.error}`}</Alert>
+        )}
+        {applied && (
+          <Alert severity="success" sx={{ mb: 2 }}>
+            {applied.publication
+              ? `Published “${applied.publication.label}” — ${applied.sheets.length} sheet(s) live.`
+              : `Rates unchanged — ${applied.sheets.length} sheet(s) already matched the index.`}
+          </Alert>
+        )}
+        {preview.data && !applied && (
+          <>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              Fetched {new Date(preview.data.fetchedAt).toLocaleString()} ·
+              sha256 {preview.data.contentHash.slice(0, 12)}…
+            </Typography>
+            <Table size="small" sx={{ mb: 2 }}>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Index product</TableCell>
+                  <TableCell align="right">Rate</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {preview.data.indexRates.map((r) => (
+                  <TableRow key={r.label}>
+                    <TableCell>{r.label}</TableCell>
+                    <TableCell align="right" sx={{ fontFamily: "monospace" }}>
+                      {r.rate.toFixed(2)}%
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <Typography variant="subtitle2" gutterBottom>
+              Sheets this will write ({preview.data.sheets.length})
+            </Typography>
+            <Table size="small" sx={{ mb: 2 }}>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Product</TableCell>
+                  <TableCell align="right">Rate</TableCell>
+                  <TableCell>Source</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {preview.data.sheets.map((s) => (
+                  <TableRow key={s.productCode}>
+                    <TableCell>{s.productCode}</TableCell>
+                    <TableCell align="right" sx={{ fontFamily: "monospace" }}>
+                      {s.rate.toFixed(2)}%
+                    </TableCell>
+                    <TableCell>
+                      {s.source.startsWith("base:")
+                        ? `${s.source.slice(5)} ${s.adjustment >= 0 ? "+" : ""}${s.adjustment}`
+                        : s.source.slice(6)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {preview.data.skipped.length > 0 && (
+              <Typography variant="body2" color="text.secondary">
+                Manual sheets untouched: {preview.data.skipped.join(", ")}
+              </Typography>
+            )}
+            {preview.data.unmapped.length > 0 && (
+              <Alert severity="warning" sx={{ mt: 1 }}>
+                Index labels with no product: {preview.data.unmapped.join(", ")}
+              </Alert>
+            )}
+          </>
+        )}
+        {applyError && (
+          <Alert severity="error" sx={{ mt: 2 }}>
+            {applyError}
+          </Alert>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={close}>{applied ? "Close" : "Cancel"}</Button>
+        {!applied && (
+          <Button
+            variant="contained"
+            disabled={!preview.data || apply.isPending}
+            onClick={() => apply.mutate()}
+          >
+            Apply &amp; publish
+          </Button>
+        )}
+      </DialogActions>
+    </Dialog>
   );
 }

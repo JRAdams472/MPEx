@@ -63,6 +63,55 @@ export interface Product {
   termMonths: number;
   description: string;
   active: boolean;
+  /** MND index label when this is a base product; null otherwise. */
+  mndLabel: string | null;
+  /** Base product code when this is a derived product; null otherwise. */
+  baseProductCode: string | null;
+  /** Points added to the base index rate for derived products. */
+  rateAdjustment: number;
+}
+
+export interface IndexRate {
+  label: string;
+  rate: number;
+}
+
+export interface ResolvedSheet {
+  productCode: string;
+  rate: number;
+  /** "index:<label>" or "base:<code>". */
+  source: string;
+  adjustment: number;
+}
+
+export interface RateIndexPreview {
+  fetchedAt: string;
+  sourceUrl: string;
+  contentHash: string;
+  indexRates: IndexRate[];
+  sheets: ResolvedSheet[];
+  skipped: string[];
+  unmapped: string[];
+}
+
+export interface RateIndexImport {
+  importId: string;
+  fetchedAt: string;
+  contentHash: string;
+  sheets: ResolvedSheet[];
+  skipped: string[];
+  unmapped: string[];
+  publication: { id: string; label: string; publishedAt: string } | null;
+}
+
+export interface RateIndexImportRow {
+  id: string;
+  fetchedAt: string;
+  sourceUrl: string;
+  contentHash: string;
+  importedBy: string;
+  publicationId: string | null;
+  createdAt: string;
 }
 
 export interface ArtifactListItem {
@@ -265,6 +314,26 @@ export const endpoints = {
   publication: (id: string) =>
     apiGet<Publication>(`/api/publications/${encodeURIComponent(id)}`),
   publish: (label: string) => apiPost<Publication>("/api/publications", { label }),
+  rateIndex: () =>
+    apiGet<{ indexLabels: string[]; imports: RateIndexImportRow[] }>(
+      "/api/rate-index",
+    ),
+  previewRateIndex: () =>
+    apiPost<RateIndexPreview>("/api/admin/rate-index/preview"),
+  importRateIndex: () =>
+    apiPost<RateIndexImport>("/api/admin/rate-index/import"),
+  saveProductRateConfig: (
+    code: string,
+    body: {
+      mndLabel?: string | null;
+      baseProductCode?: string | null;
+      rateAdjustment?: number;
+    },
+  ) =>
+    apiPut<{ code: string }>(
+      `/api/admin/products/${encodeURIComponent(code)}/rate-config`,
+      body,
+    ),
   evaluateEligibility: (loan: unknown, asOf?: string, trace?: boolean) =>
     apiPost<EligibilityReport>("/api/evaluate/eligibility", {
       loan,
