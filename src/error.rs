@@ -21,6 +21,9 @@ pub enum AppError {
     #[error("forbidden: {0}")]
     Forbidden(String),
 
+    #[error("bad gateway: {0}")]
+    BadGateway(String),
+
     #[error("rate limited ({bucket} bucket): retry in {retry_after}s")]
     TooManyRequests {
         bucket: &'static str,
@@ -42,6 +45,7 @@ impl IntoResponse for AppError {
             AppError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
             AppError::Unauthorized(m) => (StatusCode::UNAUTHORIZED, m.clone()),
             AppError::Forbidden(m) => (StatusCode::FORBIDDEN, m.clone()),
+            AppError::BadGateway(m) => (StatusCode::BAD_GATEWAY, m.clone()),
             AppError::TooManyRequests {
                 bucket,
                 retry_after,

@@ -18,6 +18,11 @@ mortgage product eligibility and pricing. Rules are metadata-driven and executed
 - **Rate sheets** are per-product grids (note-rate rows × lock-term columns → price) tied to
   a **publication** stamped with a publish date/time — so historic pricing can be re-run by
   passing an `asOf` timestamp.
+- **Daily rate index**: admins can load today's index rates from MND's Daily Mortgage Rate
+  Index. Six base products take the index rate directly; every other product derives as a
+  base rate + per-product adjustment. Imports preview first, then write single-rate-at-par
+  drafts and stamp a rate-sheets-only publication; a daily scheduler can run the same import
+  (`RATE_INDEX_DAILY_AT`).
 - **All rules are editable in the web UI**: embedded GoRules JDM editor for decision graphs,
   plus purpose-built matrix and rate-sheet grid editors.
 - **Idempotent evaluation**: `POST /api/evaluate/eligibility` and `POST /api/evaluate/pricing`
@@ -64,6 +69,16 @@ Web UI: http://localhost:3000 · API: http://localhost:8080 (`/healthz`, `/api/h
   hash-chained `audit_events` rows inside the mutation's transaction —
   tamper-evident and append-only at the storage layer. Admins read it via
   `GET /api/audit` and re-verify the chain via `GET /api/audit/verify`.
+- **Rate-index import**: `POST /api/admin/rate-index/preview` and
+  `/import` fetch the MND daily index server-side (configurable via
+  `RATE_INDEX_URL`), write single-rate-at-par sheets, and stamp a
+  rate-sheets-scoped publication — atomic on any fetch/parse failure, and
+  unrelated drafts are never swept into the import's publication. Product
+  rate sources are managed via `PUT /api/admin/products/{code}/rate-config`
+  (`mndLabel` base | `baseProductCode` + `rateAdjustment` derived | manual).
+  `GET /api/rate-index` (viewer+) lists the index labels and import
+  provenance. `RATE_INDEX_DAILY_AT=HH:MM` enables a daily scheduled import
+  audited under the `rate-index-scheduler` actor.
 - **PII guard**: `/api/evaluate/*` loan payloads are recursively scanned
   before parsing — denylisted field names and SSN/email value shapes are
   rejected 400 with the JSON path only.

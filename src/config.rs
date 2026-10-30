@@ -22,6 +22,12 @@ pub struct Config {
     /// discovery URL (e.g. `http://dex:5556/dex/keys` inside compose).
     /// Unset = resolve via `{issuer}/.well-known/openid-configuration`.
     pub oidc_jwks_url: Option<String>,
+    /// Rate-index page URL (MND by default; stubs/tests override).
+    pub rate_index_url: String,
+    /// Fetch timeout for the index page, in seconds.
+    pub rate_index_timeout_secs: u64,
+    /// Daily scheduled import time ("HH:MM" UTC). Unset = scheduler off.
+    pub rate_index_daily_at: Option<String>,
 }
 
 impl Config {
@@ -49,6 +55,15 @@ impl Config {
             oidc_jwks_url: std::env::var("OIDC_JWKS_URL")
                 .ok()
                 .filter(|s| !s.is_empty()),
+            rate_index_url: std::env::var("RATE_INDEX_URL")
+                .unwrap_or_else(|_| crate::rate_index::DEFAULT_URL.into()),
+            rate_index_timeout_secs: std::env::var("RATE_INDEX_TIMEOUT_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(15),
+            rate_index_daily_at: std::env::var("RATE_INDEX_DAILY_AT")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
         }
     }
 }

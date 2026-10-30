@@ -96,6 +96,25 @@ docker exec mpex-seq-1 seqcli apikey create -t mpex-ingest \
   expression ≤ 64 KiB, serialized spec/jdm ≤ 1 MiB.
 - `RATE_LIMIT_DISABLE=1` turns limits off (local dev escape hatch — never prod).
 
+## Rate-index import
+
+The admin rate-index feature fetches an **external, untrusted** HTML page
+(`RATE_INDEX_URL`, default MND) server-side — the browser never touches the
+source. Treat the fetched content as hostile input: the parser confines
+matching to the `mtg-rates` table, requires bare `<th>label</th><td>rate%`
+rows for all six allowlisted labels, bounds rates to (0.5, 25), and fails
+**all-or-nothing** — markup drift writes nothing. Fetch has a bounded
+timeout (`RATE_INDEX_TIMEOUT_SECS`) and upstream failures map to 502, never
+500. The import itself is one transaction: draft upserts → a
+rate-sheets-**scoped** publication (an unattended import can never sweep
+unrelated decision/matrix drafts live) → `rate_index_imports` provenance
+(source URL, sha256 content hash, rates, actor, publication) → a
+`rate_index.import` audit row. `product.rate_config.put` rows audit
+per-product rate-source changes. The daily scheduler
+(`RATE_INDEX_DAILY_AT=HH:MM` UTC, unset = off) runs the same path under the
+`rate-index-scheduler` synthetic actor — scheduled failures log and never
+crash the API.
+
 ## PII guard
 
 `POST /api/evaluate/*` loan payloads pass `security::pii_guard` before

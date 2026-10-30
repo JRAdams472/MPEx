@@ -7,6 +7,7 @@ mod grants;
 mod matrices;
 mod products;
 mod publications;
+mod rate_index;
 mod rate_sheets;
 pub(crate) mod validate;
 
@@ -51,6 +52,9 @@ pub struct AppState {
     /// it from env. Applied *inside* `security_headers` so 429s carry the
     /// header baseline too.
     pub rate_limits: Option<Arc<crate::limits::EdgeLimits>>,
+    /// MND rate-index fetch settings — `None` disables the preview/import
+    /// endpoints; tests point it at a stub server.
+    pub rate_index: Option<crate::rate_index::IndexSettings>,
 }
 
 /// Role buckets — each merged sub-router carries its own gate layer.
@@ -88,6 +92,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/matrices/{key}", get(matrices::get))
         .route("/api/rate-sheets", get(rate_sheets::list))
         .route("/api/rate-sheets/{key}", get(rate_sheets::get))
+        .route("/api/rate-index", get(rate_index::get))
         .route("/api/publications", get(publications::list))
         .route("/api/publications/{id}", get(publications::get))
         .route_layer(middleware::from_fn_with_state(
@@ -126,6 +131,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/audit/verify", get(audit::verify))
         .route("/api/admin/grants", get(grants::list).put(grants::upsert))
         .route("/api/admin/grants/{id}", delete(grants::revoke))
+        .route("/api/admin/rate-index/preview", post(rate_index::preview))
+        .route("/api/admin/rate-index/import", post(rate_index::import))
+        .route(
+            "/api/admin/products/{code}/rate-config",
+            put(rate_index::put_rate_config),
+        )
         .route_layer(middleware::from_fn_with_state(
             (state.clone(), ADMIN),
             role_gate,
