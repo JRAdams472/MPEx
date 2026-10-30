@@ -79,7 +79,7 @@ export default function DecisionDetailPage() {
     mutationFn: async () => {
       const loan = JSON.parse(loanJson);
       // "draft" revision — the saved draft is what the user is editing.
-      const res = await endpoints.evaluateEligibility(loan, "draft");
+      const res = await endpoints.evaluateEligibility(loan, { asOf: "draft" });
       if (res.status >= 400) throw new Error(`evaluate failed: HTTP ${res.status}`);
       return res.data;
     },
@@ -211,6 +211,7 @@ export default function DecisionDetailPage() {
           </Typography>
           {data.history.map((h) => (
             <Typography key={h.publicationId} variant="body2" color="text.secondary">
+              <Chip label={h.env} size="small" variant="outlined" sx={{ mr: 1 }} />
               {h.publicationLabel ?? h.publicationId} —{" "}
               {new Date(h.publishedAt).toLocaleString()}
             </Typography>

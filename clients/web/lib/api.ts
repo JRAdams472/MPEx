@@ -39,8 +39,23 @@ export const apiPut = <T>(path: string, body: unknown) =>
   apiWrite<T>("PUT", path, body);
 export const apiDelete = (path: string) => apiWrite("DELETE", path);
 
-const asOfQuery = (asOf?: string) =>
-  asOf ? `?asOf=${encodeURIComponent(asOf)}` : "";
+/** Environment lanes (MPE-153): dev is the working lane; qa/uat/prod hold
+ *  promoted published rows only. */
+export type Env = "dev" | "qa" | "uat" | "prod";
+export const ENVS: Env[] = ["dev", "qa", "uat", "prod"];
+export const NEXT_ENV: Partial<Record<Env, Env>> = {
+  dev: "qa",
+  qa: "uat",
+  uat: "prod",
+};
+
+const listQuery = (asOf?: string, env?: Env) => {
+  const params = new URLSearchParams();
+  if (asOf) params.set("asOf", asOf);
+  if (env) params.set("env", env);
+  const q = params.toString();
+  return q ? `?${q}` : "";
+};
 
 /** Error message from an apiWrite-backed mutation result, or null when clean. */
 export function mutationError(m: {
@@ -144,6 +159,8 @@ export interface HistoryEntry {
   publishedAt: string;
   publicationId: string;
   publicationLabel: string | null;
+  /** Lane this published row lives in (MPE-153). */
+  env: Env;
 }
 
 export interface ArtifactDetail {
@@ -158,6 +175,8 @@ export interface Publication {
   label: string;
   status: string;
   publishedAt: string;
+  /** Lane this publication stamped (MPE-153). */
+  env: Env;
   decisionCount?: number;
   expressionCount?: number;
   matrixCount?: number;
@@ -258,14 +277,21 @@ export interface PricingOptions {
   rate?: number;
   lockTermDays?: number;
   asOf?: string;
+  env?: Env;
+  trace?: boolean;
+}
+
+export interface EvalOptions {
+  asOf?: string;
+  env?: Env;
   trace?: boolean;
 }
 
 export const endpoints = {
   products: () => apiGet<{ products: Product[] }>("/api/products"),
-  decisions: (asOf?: string) =>
+  decisions: (asOf?: string, env?: Env) =>
     apiGet<{ decisions: ArtifactListItem[] }>(
-      `/api/decisions${asOfQuery(asOf)}`,
+      `/api/decisions${listQuery(asOf, env)}`,
     ),
   decision: (key: string) =>
     apiGet<ArtifactDetail>(`/api/decisions/${encodeURIComponent(key)}`),
@@ -273,9 +299,9 @@ export const endpoints = {
     apiPut<ArtifactRow>(`/api/decisions/${encodeURIComponent(key)}`, body),
   deleteDecision: (key: string) =>
     apiDelete(`/api/decisions/${encodeURIComponent(key)}`),
-  expressions: (asOf?: string) =>
+  expressions: (asOf?: string, env?: Env) =>
     apiGet<{ expressions: ArtifactListItem[] }>(
-      `/api/expressions${asOfQuery(asOf)}`,
+      `/api/expressions${listQuery(asOf, env)}`,
     ),
   expression: (key: string) =>
     apiGet<ArtifactDetail>(`/api/expressions/${encodeURIComponent(key)}`),
@@ -288,9 +314,9 @@ export const endpoints = {
       expression,
       kind,
     }),
-  matrices: (asOf?: string) =>
+  matrices: (asOf?: string, env?: Env) =>
     apiGet<{ matrices: ArtifactListItem[] }>(
-      `/api/matrices${asOfQuery(asOf)}`,
+      `/api/matrices${listQuery(asOf, env)}`,
     ),
   matrix: (key: string) =>
     apiGet<ArtifactDetail>(`/api/matrices/${encodeURIComponent(key)}`),
@@ -300,9 +326,9 @@ export const endpoints = {
     apiDelete(`/api/matrices/${encodeURIComponent(key)}`),
   simulateMatrix: (spec: unknown, context: unknown) =>
     apiPost<SimulateResult>("/api/simulate/matrix", { spec, context }),
-  rateSheets: (asOf?: string) =>
+  rateSheets: (asOf?: string, env?: Env) =>
     apiGet<{ rateSheets: ArtifactListItem[] }>(
-      `/api/rate-sheets${asOfQuery(asOf)}`,
+      `/api/rate-sheets${listQuery(asOf, env)}`,
     ),
   rateSheet: (key: string) =>
     apiGet<ArtifactDetail>(`/api/rate-sheets/${encodeURIComponent(key)}`),
@@ -314,6 +340,10 @@ export const endpoints = {
   publication: (id: string) =>
     apiGet<Publication>(`/api/publications/${encodeURIComponent(id)}`),
   publish: (label: string) => apiPost<Publication>("/api/publications", { label }),
+  /** Adjacent-lane promotion (MPE-153): stamps changed artifacts from `from`
+   *  into `to` under a new publication. 400 non-adjacent, 409 empty delta. */
+  promote: (from: Env, to: Env, label: string) =>
+    apiPost<Publication>("/api/admin/promotions", { from, to, label }),
   rateIndex: () =>
     apiGet<{ indexLabels: string[]; imports: RateIndexImportRow[] }>(
       "/api/rate-index",
@@ -334,11 +364,12 @@ export const endpoints = {
       `/api/admin/products/${encodeURIComponent(code)}/rate-config`,
       body,
     ),
-  evaluateEligibility: (loan: unknown, asOf?: string, trace?: boolean) =>
+  evaluateEligibility: (loan: unknown, opts?: EvalOptions) =>
     apiPost<EligibilityReport>("/api/evaluate/eligibility", {
       loan,
-      asOf,
-      trace,
+      asOf: opts?.asOf,
+      env: opts?.env,
+      trace: opts?.trace,
     }),
   evaluatePricing: (loan: unknown, products: string[], opts?: PricingOptions) =>
     apiPost<PricingReport>("/api/evaluate/pricing", {
@@ -347,6 +378,7 @@ export const endpoints = {
       rate: opts?.rate,
       lockTermDays: opts?.lockTermDays,
       asOf: opts?.asOf,
+      env: opts?.env,
       trace: opts?.trace,
     }),
 };
