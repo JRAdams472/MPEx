@@ -130,7 +130,7 @@ use tower::ServiceExt;
 
 use mpex::api::{self, AppState};
 use mpex::auth::testkit;
-use mpex::rules::loader::Revision;
+use mpex::rules::loader::{Env, Revision};
 use mpex::rules::snapshot::SnapshotStore;
 
 const MATRIX_KEY: &str = "matrix.p3test.llpa";
@@ -160,7 +160,7 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
 
 /// Evaluate a decision key through the snapshot loader for a revision.
 async fn eval_at(snapshots: &SnapshotStore, revision: Revision, ctx: Value) -> Value {
-    let loader = snapshots.loader_for(revision).await.unwrap();
+    let loader = snapshots.loader_for(revision, Env::Dev).await.unwrap();
     let engine = DecisionEngine::default().with_loader(loader);
     tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Builder::new_current_thread()

@@ -16,18 +16,22 @@ pub struct ListQuery {
     /// Omitted or "draft" = working drafts; RFC3339 = the published snapshot
     /// as of that timestamp.
     pub as_of: Option<String>,
+    /// Lane the published (asOf) view resolves in; omitted = dev (MPE-153).
+    pub env: Option<String>,
 }
 
 pub async fn list(
     State(state): State<AppState>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Value>, AppError> {
+    let env = super::parse_env(q.env.as_deref())?;
     let sheets = match super::parse_admin_as_of(q.as_of.as_deref())? {
         None => {
             let rows = sqlx::query_as::<_, (String, DateTime<Utc>, bool)>(
                 "SELECT s.key, s.updated_at,
                         EXISTS (SELECT 1 FROM rate_sheets p
-                                WHERE p.key = s.key AND p.status = 'published')
+                                WHERE p.key = s.key AND p.status = 'published'
+                                  AND p.env = 'dev')
                  FROM rate_sheets s WHERE s.status = 'draft' ORDER BY s.key",
             )
             .fetch_all(&state.pool)
@@ -47,10 +51,11 @@ pub async fn list(
             let rows = sqlx::query_as::<_, (String, Option<DateTime<Utc>>, Option<Uuid>)>(
                 "SELECT DISTINCT ON (key) key, published_at, publication_id
                  FROM rate_sheets
-                 WHERE status = 'published' AND published_at <= $1
+                 WHERE status = 'published' AND published_at <= $1 AND env = $2
                  ORDER BY key, published_at DESC",
             )
             .bind(ts)
+            .bind(env.as_str())
             .fetch_all(&state.pool)
             .await?;
             rows.into_iter()
@@ -110,7 +115,7 @@ pub async fn get(
     .await?;
     let published = sqlx::query_as::<_, SheetRow>(&format!(
         "SELECT {ROW_COLS} FROM rate_sheets
-             WHERE key = $1 AND status = 'published'
+             WHERE key = $1 AND status = 'published' AND env = 'dev'
              ORDER BY published_at DESC LIMIT 1"
     ))
     .bind(&key)
@@ -120,24 +125,26 @@ pub async fn get(
         return Err(AppError::NotFound(format!("rate sheet {key}")));
     }
 
-    let history = sqlx::query_as::<_, (Option<DateTime<Utc>>, Option<Uuid>, Option<String>)>(
-        "SELECT s.published_at, s.publication_id, p.label
+    let history =
+        sqlx::query_as::<_, (Option<DateTime<Utc>>, Option<Uuid>, Option<String>, String)>(
+            "SELECT s.published_at, s.publication_id, p.label, s.env
          FROM rate_sheets s LEFT JOIN publications p ON p.id = s.publication_id
          WHERE s.key = $1 AND s.status = 'published'
          ORDER BY s.published_at DESC",
-    )
-    .bind(&key)
-    .fetch_all(&state.pool)
-    .await?
-    .into_iter()
-    .map(|(published_at, publication_id, label)| {
-        json!({
-            "publishedAt": published_at,
-            "publicationId": publication_id,
-            "publicationLabel": label,
+        )
+        .bind(&key)
+        .fetch_all(&state.pool)
+        .await?
+        .into_iter()
+        .map(|(published_at, publication_id, label, env)| {
+            json!({
+                "publishedAt": published_at,
+                "publicationId": publication_id,
+                "publicationLabel": label,
+                "env": env,
+            })
         })
-    })
-    .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
     Ok(Json(json!({
         "key": key,

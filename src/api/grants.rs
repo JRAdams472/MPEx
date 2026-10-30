@@ -35,6 +35,7 @@ struct GrantRow {
     role: String,
     granted_at: DateTime<Utc>,
     granted_by: String,
+    envs: Option<Vec<String>>,
 }
 
 impl GrantRow {
@@ -46,6 +47,7 @@ impl GrantRow {
             "role": self.role,
             "grantedAt": self.granted_at,
             "grantedBy": self.granted_by,
+            "envs": self.envs,
         })
     }
 }
@@ -57,7 +59,7 @@ pub async fn list(
 ) -> Result<Json<Value>, AppError> {
     let limit = q.limit.unwrap_or(500).clamp(1, 1000);
     let rows = sqlx::query_as::<_, GrantRow>(
-        "SELECT id, subject_type, subject, role, granted_at, granted_by
+        "SELECT id, subject_type, subject, role, granted_at, granted_by, envs
          FROM role_grants ORDER BY subject_type, subject LIMIT $1",
     )
     .bind(limit)
@@ -73,9 +75,36 @@ pub struct UpsertGrant {
     pub subject_type: String,
     pub subject: String,
     pub role: String,
+    /// Optional environment lanes this grant permits for eval (MPE-153).
+    /// Omitted = unrestricted (NULL). An empty array permits no lanes.
+    pub envs: Option<Vec<String>>,
 }
 
-fn validate(req: &UpsertGrant) -> Result<(String, String, String), AppError> {
+struct ValidatedGrant {
+    subject_type: String,
+    subject: String,
+    role: String,
+    envs: Option<Vec<String>>,
+}
+
+fn validate(req: &UpsertGrant) -> Result<ValidatedGrant, AppError> {
+    let envs = req
+        .envs
+        .as_ref()
+        .map(|envs| {
+            envs.iter()
+                .map(|e| {
+                    crate::rules::loader::Env::parse(e)
+                        .map(|env| env.as_str().to_string())
+                        .ok_or_else(|| {
+                            AppError::BadRequest(format!(
+                                "envs entries must be one of dev|qa|uat|prod: {e:?}"
+                            ))
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
     if !SUBJECT_TYPES.contains(&req.subject_type.as_str()) {
         return Err(AppError::BadRequest(format!(
             "subjectType must be one of {SUBJECT_TYPES:?}"
@@ -97,11 +126,12 @@ fn validate(req: &UpsertGrant) -> Result<(String, String, String), AppError> {
             "role must be one of {ROLES:?}"
         )));
     }
-    Ok((
-        req.subject_type.clone(),
-        subject.to_string(),
-        req.role.clone(),
-    ))
+    Ok(ValidatedGrant {
+        subject_type: req.subject_type.clone(),
+        subject: subject.to_string(),
+        role: req.role.clone(),
+        envs,
+    })
 }
 
 /// `PUT /api/admin/grants` — insert or refresh a grant. `granted_by` is
@@ -111,7 +141,7 @@ pub async fn upsert(
     principal: Principal,
     Json(req): Json<UpsertGrant>,
 ) -> Result<(StatusCode, Json<Value>), AppError> {
-    let (subject_type, subject, role) = validate(&req)?;
+    let grant = validate(&req)?;
     let granted_by = principal
         .email
         .clone()
@@ -119,16 +149,18 @@ pub async fn upsert(
 
     let mut tx = state.pool.begin().await?;
     let row = sqlx::query_as::<_, GrantRow>(
-        "INSERT INTO role_grants (subject_type, subject, role, granted_by)
-         VALUES ($1, $2, $3, $4)
+        "INSERT INTO role_grants (subject_type, subject, role, granted_by, envs)
+         VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (subject_type, subject, role)
-         DO UPDATE SET granted_at = now(), granted_by = EXCLUDED.granted_by
-         RETURNING id, subject_type, subject, role, granted_at, granted_by",
+         DO UPDATE SET granted_at = now(), granted_by = EXCLUDED.granted_by,
+                       envs = EXCLUDED.envs
+         RETURNING id, subject_type, subject, role, granted_at, granted_by, envs",
     )
-    .bind(&subject_type)
-    .bind(&subject)
-    .bind(&role)
+    .bind(&grant.subject_type)
+    .bind(&grant.subject)
+    .bind(&grant.role)
     .bind(&granted_by)
+    .bind(&grant.envs)
     .fetch_one(&mut *tx)
     .await?;
     // xmax = 0 on the RETURNING row means this was an INSERT, not an update.
@@ -143,11 +175,12 @@ pub async fn upsert(
         audit::Event {
             action: audit::action::GRANT_PUT,
             artifact_table: Some("role_grants"),
-            artifact_key: Some(format!("{subject_type}:{subject}")),
+            artifact_key: Some(format!("{}:{}", grant.subject_type, grant.subject)),
             detail: json!({
-                "subjectType": subject_type,
-                "subject": subject,
-                "role": role,
+                "subjectType": grant.subject_type,
+                "subject": grant.subject,
+                "role": grant.role,
+                "envs": grant.envs,
                 "created": created,
             }),
         },

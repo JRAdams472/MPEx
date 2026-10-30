@@ -20,6 +20,9 @@ pub struct Principal {
     /// resolved against — lets handlers test whether a grant belongs to the
     /// caller (e.g. the admin self-revoke guard).
     pub identity_keys: Vec<(String, String)>,
+    /// Environment lanes this principal may evaluate against (MPE-153).
+    /// `None` = unrestricted (any grant with NULL envs).
+    pub permitted_envs: Option<HashSet<String>>,
 }
 
 impl Principal {
@@ -73,12 +76,13 @@ impl Principal {
                 .into_iter()
                 .map(|a| ("aud".to_string(), a)),
         );
-        let roles = auth.roles.roles_for(&keys).await?;
+        let res = auth.roles.resolve(&keys).await?;
         Ok(Principal {
             sub: claims.sub,
             email: claims.email,
-            roles,
+            roles: res.roles,
             identity_keys: keys,
+            permitted_envs: res.envs,
         })
     }
 }

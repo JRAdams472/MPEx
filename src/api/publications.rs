@@ -11,8 +11,21 @@ use crate::error::AppError;
 use crate::rules::publish;
 
 pub async fn list(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
-    let rows = sqlx::query_as::<_, (Uuid, String, String, DateTime<Utc>, i64, i64, i64, i64)>(
-        "SELECT p.id, p.label, p.status, p.published_at,
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            DateTime<Utc>,
+            String,
+            i64,
+            i64,
+            i64,
+            i64,
+        ),
+    >(
+        "SELECT p.id, p.label, p.status, p.published_at, p.env,
                 (SELECT count(*) FROM decisions d WHERE d.publication_id = p.id),
                 (SELECT count(*) FROM expressions e WHERE e.publication_id = p.id),
                 (SELECT count(*) FROM matrices m WHERE m.publication_id = p.id),
@@ -29,6 +42,7 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Value>, AppError
                 label,
                 status,
                 published_at,
+                env,
                 decision_count,
                 expression_count,
                 matrix_count,
@@ -39,6 +53,7 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Value>, AppError
                     "label": label,
                     "status": status,
                     "publishedAt": published_at,
+                    "env": env,
                     "decisionCount": decision_count,
                     "expressionCount": expression_count,
                     "matrixCount": matrix_count,
@@ -54,13 +69,13 @@ pub async fn get(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, AppError> {
-    let row = sqlx::query_as::<_, (Uuid, String, String, DateTime<Utc>)>(
-        "SELECT id, label, status, published_at FROM publications WHERE id = $1",
+    let row = sqlx::query_as::<_, (Uuid, String, String, DateTime<Utc>, String)>(
+        "SELECT id, label, status, published_at, env FROM publications WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&state.pool)
     .await?;
-    let Some((id, label, status, published_at)) = row else {
+    let Some((id, label, status, published_at, env)) = row else {
         return Err(AppError::NotFound(format!("publication {id}")));
     };
 
@@ -92,6 +107,7 @@ pub async fn get(
         "label": label,
         "status": status,
         "publishedAt": published_at,
+        "env": env,
         "decisions": decisions,
         "expressions": expressions,
         "matrices": matrices,
@@ -116,6 +132,42 @@ pub async fn create(
     let label = req.label.unwrap_or_default();
     let publication =
         publish::publish(&state.pool, &label, crate::audit::Actor::from(&principal)).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(publication).unwrap_or_default()),
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromoteRequest {
+    pub from: String,
+    pub to: String,
+    pub label: Option<String>,
+}
+
+/// Atomically promotes the latest published artifact set one lane forward
+/// (dev→qa→uat→prod) under a named publication in the target lane. 400 on
+/// non-adjacent lanes, 409 when the lanes already agree on every artifact.
+pub async fn promote(
+    State(state): State<AppState>,
+    principal: crate::auth::Principal,
+    Json(req): Json<PromoteRequest>,
+) -> Result<(StatusCode, Json<Value>), AppError> {
+    let parse = |v: &str, which: &str| {
+        crate::rules::loader::Env::parse(v)
+            .ok_or_else(|| AppError::BadRequest(format!("{which} must be one of dev|qa|uat|prod")))
+    };
+    let (from, to) = (parse(&req.from, "from")?, parse(&req.to, "to")?);
+    let label = req.label.unwrap_or_default();
+    let publication = publish::promote(
+        &state.pool,
+        from,
+        to,
+        &label,
+        crate::audit::Actor::from(&principal),
+    )
+    .await?;
     Ok((
         StatusCode::CREATED,
         Json(serde_json::to_value(publication).unwrap_or_default()),

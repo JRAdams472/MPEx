@@ -88,7 +88,10 @@ fn is_mutation(req: &Request) -> bool {
     req.method() == Method::POST
         && matches!(
             req.uri().path(),
-            "/api/publications" | "/api/admin/rate-index/preview" | "/api/admin/rate-index/import"
+            "/api/publications"
+                | "/api/admin/promotions"
+                | "/api/admin/rate-index/preview"
+                | "/api/admin/rate-index/import"
         )
 }
 
