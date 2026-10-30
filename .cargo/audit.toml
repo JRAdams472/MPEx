@@ -1,11 +1,22 @@
 [advisories]
 ignore = [
-    # zip 8.x extraction advisories — zen-engine 2.1.x pins `zip = "8"` and no
-    # upstream release takes zip 9 yet. All three advisories live in archive
-    # *extraction* (`ZipArchive::extract`/`ZipStreamReader::extract`). MPEx
+    # zip 8.x advisories — zen-engine 2.1.6 (latest) pins `zip = "8"` as a
+    # non-optional dependency, so no upstream release takes zip 9 yet. MPEx
     # loads JDM as JSON from Postgres snapshots via MemoryLoader/CachedLoader;
-    # no filesystem or bundle loader is ever constructed, so the vulnerable
-    # path is unreachable. Revisit when zen-engine ships zip 9.
+    # no archive loader (filesystem, bundle, or stream) is ever constructed,
+    # so every zip code path is unreachable. Revisit when zen-engine ships
+    # zip 9 — tracked in MPE-124.
+    #
+    # Second advisory wave (dependabot GHSAs, not yet in the RustSec DB):
+    # when RustSec imports them they will fail `cargo audit` under NEW
+    # RUSTSEC-YYYY-NNNN ids — ignore matching is by advisory id only, not
+    # aliases, so the GHSAs below cannot be pre-ignored. Add the new ids here
+    # as they land; justification is identical (unreachable code path).
+    #   GHSA-m665-v7pm-7grj  critical  Zip Cloaking dual-header overwrite (<=9.0.4)
+    #   GHSA-q7v9-x93c-xqv3  high      unbounded symlink-target memory (>=1.3.0,<9)
+    #   GHSA-8hxf-qr8p-62x4  medium    AES entry HMAC bypass on EOF (>=0.6.0,<9)
+    #   GHSA-hjqx-j4rw-g7xv  high      extract symlink-target escape (>=7.2.0,<9)
+    #   GHSA-9hj8-73fh-9963  high      Shrink/Reduce/Implode ZIP64 DoS (>=5.1.0,<9)
     "RUSTSEC-2026-0367",
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
