@@ -6,11 +6,11 @@ test("admin sees Load today's rates and the preview dialog opens", async ({
   await page.goto("/rate-sheets");
   await expect(page.getByRole("heading", { name: "Rate sheets" })).toBeVisible();
 
-  const load = page.getByRole("button", { name: /load today's rates/i });
+  const load = page.getByRole("button", { name: /load today['’]s rates/i });
   await expect(load).toBeVisible();
   await load.click();
 
-  const dialog = page.getByRole("dialog", { name: /load today's rates/i });
+  const dialog = page.getByRole("dialog", { name: /load today['’]s rates/i });
   await expect(dialog).toBeVisible();
   // The preview either resolves (real index reachable) or surfaces the
   // upstream error — never a blank dialog.
