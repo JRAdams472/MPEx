@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
  * the JWE is verified server-side in the BFF/auth routes (a stale cookie
  * fails there and the client bounces back to login on the 401).
  */
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   if (req.cookies.has("mpex_session")) {
     return NextResponse.next();
   }

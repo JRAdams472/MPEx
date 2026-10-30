@@ -20,6 +20,7 @@ export function useMe() {
     queryFn: async () => {
       const res = await fetch("/auth/me");
       if (res.status === 401) {
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- inside a React Query queryFn (no useRouter); /auth/login is a route handler, needs a document navigation
         window.location.assign("/auth/login");
         throw new Error("unauthenticated");
       }
