@@ -43,10 +43,11 @@ impl Role {
 }
 
 /// Resolves `role_grants` rows for a token's identity keys, briefly cached —
-/// role changes propagate within ~60s, fine for an admin surface. Identity
-/// keys: the `sub` claim, the `email` claim (dex static users identify by
-/// email; `sub` is an opaque encoded id), and each `aud` value
-/// (client-credentials tokens identify by client_id, which lands in `aud`).
+/// role changes propagate within ~60s across instances (grant mutations
+/// invalidate the local cache immediately). Identity keys are typed pairs:
+/// `("sub", sub)`, `("email", email)` (dex static users identify by email;
+/// `sub` is an opaque encoded id), and `("aud", client_id)` for each
+/// audience (client-credentials tokens identify by client_id in `aud`).
 pub struct RoleResolver {
     pool: PgPool,
     cache: Mutex<HashMap<String, (HashSet<Role>, Instant)>>,
@@ -62,8 +63,14 @@ impl RoleResolver {
         }
     }
 
-    pub async fn roles_for(&self, keys: &[String]) -> Result<HashSet<Role>, sqlx::Error> {
-        let cache_key = keys.join("\u{1f}");
+    /// `keys` are `(subject_type, subject)` pairs matching the
+    /// `role_grants.subject_type` vocabulary ('sub' | 'email' | 'aud').
+    pub async fn roles_for(&self, keys: &[(String, String)]) -> Result<HashSet<Role>, sqlx::Error> {
+        let cache_key = keys
+            .iter()
+            .map(|(t, s)| format!("{t}\u{1e}{s}"))
+            .collect::<Vec<_>>()
+            .join("\u{1f}");
         {
             let cache = self.cache.lock().await;
             if let Some((roles, at)) = cache.get(&cache_key) {
@@ -73,11 +80,17 @@ impl RoleResolver {
             }
         }
 
-        let rows: Vec<String> =
-            sqlx::query_scalar("SELECT role FROM role_grants WHERE subject = ANY($1)")
-                .bind(keys)
-                .fetch_all(&self.pool)
-                .await?;
+        let types: Vec<&str> = keys.iter().map(|(t, _)| t.as_str()).collect();
+        let subjects: Vec<&str> = keys.iter().map(|(_, s)| s.as_str()).collect();
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT role FROM role_grants
+             WHERE (subject_type, subject) IN
+                   (SELECT * FROM unnest($1::text[], $2::text[]))",
+        )
+        .bind(&types)
+        .bind(&subjects)
+        .fetch_all(&self.pool)
+        .await?;
         let roles: HashSet<Role> = rows.iter().filter_map(|r| Role::parse(r)).collect();
 
         self.cache
@@ -85,5 +98,12 @@ impl RoleResolver {
             .await
             .insert(cache_key, (roles.clone(), Instant::now()));
         Ok(roles)
+    }
+
+    /// Drop every cached resolution — grant mutations call this post-commit
+    /// so the new grants take effect on the very next request on this
+    /// instance. Other replicas still converge within `CACHE_TTL`.
+    pub async fn invalidate_all(&self) {
+        self.cache.lock().await.clear();
     }
 }

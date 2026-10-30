@@ -54,9 +54,12 @@ Web UI: http://localhost:3000 · API: http://localhost:8080 (`/healthz`, `/api/h
 - **AuthN/Z**: every `/api/*` route (except health) requires an OIDC bearer
   token validated against the issuer's JWKS with an algorithm allowlist.
   Roles — `viewer`, `pricer`, `admin`, `service` — resolve per request from
-  `role_grants`. Dev runs Dex in compose; humans log in via the web app's
-  auth-code+PKCE BFF (tokens sealed in an httpOnly session cookie), services
-  use client-credentials (`mpex-svc`, `mpex-ci`).
+  `role_grants` (typed `sub`/`email`/`aud` subjects). Dev runs Dex in
+  compose; humans log in via the web app's auth-code+PKCE BFF (tokens sealed
+  in an httpOnly session cookie), services use client-credentials
+  (`mpex-svc`, `mpex-ci`). Admins manage grants via
+  `GET`/`PUT /api/admin/grants` and `DELETE /api/admin/grants/{id}` —
+  audited, with self-revoke and last-admin lockout guards.
 - **Audit**: sensitive mutations and authenticated 403 denials append
   hash-chained `audit_events` rows inside the mutation's transaction —
   tamper-evident and append-only at the storage layer. Admins read it via

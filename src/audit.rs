@@ -33,6 +33,8 @@ pub mod action {
     pub const ARTIFACT_DELETE: &str = "artifact.delete";
     pub const PUBLICATION_CREATE: &str = "publication.create";
     pub const AUTH_DENIED: &str = "auth.denied";
+    pub const GRANT_PUT: &str = "grant.put";
+    pub const GRANT_DELETE: &str = "grant.delete";
 }
 
 /// Attribution for an event, derived from the request's `Principal`.

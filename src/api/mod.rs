@@ -3,6 +3,7 @@ mod auth;
 mod decisions;
 mod evaluate;
 mod expressions;
+mod grants;
 mod matrices;
 mod products;
 mod publications;
@@ -13,7 +14,7 @@ use axum::extract::{Request, State};
 use axum::http::{header, HeaderValue};
 use axum::middleware::Next;
 use axum::response::Response;
-use axum::routing::{get, post, put};
+use axum::routing::{delete, get, post, put};
 use axum::{middleware, Json, Router};
 use std::sync::Arc;
 
@@ -123,6 +124,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/publications", post(publications::create))
         .route("/api/audit", get(audit::list))
         .route("/api/audit/verify", get(audit::verify))
+        .route("/api/admin/grants", get(grants::list).put(grants::upsert))
+        .route("/api/admin/grants/{id}", delete(grants::revoke))
         .route_layer(middleware::from_fn_with_state(
             (state.clone(), ADMIN),
             role_gate,

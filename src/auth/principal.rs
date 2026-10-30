@@ -16,6 +16,10 @@ pub struct Principal {
     pub sub: String,
     pub email: Option<String>,
     pub roles: HashSet<Role>,
+    /// The typed `(subject_type, subject)` pairs this principal's grants were
+    /// resolved against — lets handlers test whether a grant belongs to the
+    /// caller (e.g. the admin self-revoke guard).
+    pub identity_keys: Vec<(String, String)>,
 }
 
 impl Principal {
@@ -53,16 +57,28 @@ impl Principal {
             AuthError::Invalid(m) => AppError::Unauthorized(m),
             AuthError::UnknownKid => AppError::Unauthorized("unknown signing key".into()),
         })?;
-        // Identity keys for grant lookup: opaque sub, human email, and the
-        // client_id that dex stamps into `aud` on client-credentials tokens.
-        let mut keys = vec![claims.sub.clone()];
-        keys.extend(claims.email.iter().cloned());
-        keys.extend(claims.audiences());
+        // Typed identity keys for grant lookup: opaque sub, human email, and
+        // the client_id that dex stamps into `aud` on client-credentials
+        // tokens — matching the role_grants.subject_type vocabulary.
+        let mut keys = vec![("sub".to_string(), claims.sub.clone())];
+        keys.extend(
+            claims
+                .email
+                .iter()
+                .map(|e| ("email".to_string(), e.clone())),
+        );
+        keys.extend(
+            claims
+                .audiences()
+                .into_iter()
+                .map(|a| ("aud".to_string(), a)),
+        );
         let roles = auth.roles.roles_for(&keys).await?;
         Ok(Principal {
             sub: claims.sub,
             email: claims.email,
             roles,
+            identity_keys: keys,
         })
     }
 }

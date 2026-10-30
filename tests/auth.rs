@@ -101,9 +101,9 @@ async fn whoami_returns_principal_with_resolved_roles() {
     // Grant one role on the opaque `sub`, one on the email claim — the
     // resolver unions both (dex static users key on email).
     sqlx::query(
-        "INSERT INTO role_grants (subject, role, granted_by) VALUES
-         ('auth-test-sub', 'pricer', 'auth-test'),
-         ('authtest@mpex.dev', 'viewer', 'auth-test')
+        "INSERT INTO role_grants (subject_type, subject, role, granted_by) VALUES
+         ('sub', 'auth-test-sub', 'pricer', 'auth-test'),
+         ('email', 'authtest@mpex.dev', 'viewer', 'auth-test')
          ON CONFLICT DO NOTHING",
     )
     .execute(&pool)
@@ -139,8 +139,8 @@ async fn whoami_returns_principal_with_resolved_roles() {
     // Service-token path: client-credentials tokens carry the client_id in
     // `aud` (dex behavior) — the grant keys on it, not the opaque sub.
     sqlx::query(
-        "INSERT INTO role_grants (subject, role, granted_by)
-         VALUES ($1, 'service', 'auth-test') ON CONFLICT DO NOTHING",
+        "INSERT INTO role_grants (subject_type, subject, role, granted_by)
+         VALUES ('aud', $1, 'service', 'auth-test') ON CONFLICT DO NOTHING",
     )
     .bind(testkit::SVC_AUDIENCE)
     .execute(&pool)
