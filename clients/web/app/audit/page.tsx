@@ -170,7 +170,7 @@ function VerifyResult({ result }: { result: AuditVerify }) {
 }
 
 export default function AuditPage() {
-  const { isAdmin } = useMe();
+  const { canAudit } = useMe();
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [pageSize, setPageSize] = useState<number>(50);
   const [offset, setOffset] = useState(0);
@@ -195,7 +195,7 @@ export default function AuditPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["audit-events", query],
     queryFn: () => endpoints.auditEvents(query),
-    enabled: isAdmin,
+    enabled: canAudit,
     placeholderData: (prev) => prev,
   });
 
@@ -219,10 +219,10 @@ export default function AuditPage() {
     }
   };
 
-  if (!isAdmin) {
+  if (!canAudit) {
     return (
       <Alert severity="warning">
-        The audit trail requires the admin role.
+        The audit trail requires the admin or auditor role.
       </Alert>
     );
   }

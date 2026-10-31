@@ -36,6 +36,10 @@ staticPasswords:
     hash: "$2b$10$Y55JS88WBjLVjZkYhCNFgeLjku8k.r4jtap3dtielQszVaIwEuy2u"
     username: "viewer"
     userID: "viewer-user"
+  - email: "auditor@mpex.dev"
+    hash: "$2b$10$kvU.BBHi/IsqEEiq6IZi1uGIN/vXAXj4bH10MWGxfbMiqWa1wkq3C"
+    username: "auditor"
+    userID: "auditor-user"
 
 staticClients:
   - id: mpex-web

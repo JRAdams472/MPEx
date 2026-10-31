@@ -65,8 +65,34 @@ test("audit: viewer gets no nav affordance and 403s through the BFF", async ({
   // Direct nav renders the client-side admin guard, and the API denies.
   await page.goto("/audit");
   await expect(
-    page.getByText(/requires the admin role/),
+    page.getByText(/requires the admin or auditor role/),
   ).toBeVisible({ timeout: 15_000 });
   const res = await page.request.get("/bff/api/audit?limit=1");
   expect(res.status()).toBe(403);
+});
+
+test("audit: auditor reads the trail but keeps no write or grants access", async ({
+  page,
+}) => {
+  await page.context().clearCookies();
+  await dexLogin(page, "auditor");
+  // Audit nav opens for auditors; grants stays admin-only.
+  await expect(page.getByRole("link", { name: "Audit" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Grants" })).not.toBeVisible();
+
+  await page.goto("/audit");
+  await expect(
+    page.getByRole("heading", { name: "Audit trail" }),
+  ).toBeVisible({ timeout: 30_000 });
+  const res = await page.request.get("/bff/api/audit?limit=1");
+  expect(res.ok()).toBeTruthy();
+
+  // Write paths and grants admin still deny the read-only role.
+  const put = await page.request.put(
+    `/bff/api/expressions/e2e-auditor.${Date.now()}`,
+    { data: { kind: "standard", expression: "1 + 1" } },
+  );
+  expect(put.status()).toBe(403);
+  const grants = await page.request.get("/bff/api/admin/grants");
+  expect(grants.status()).toBe(403);
 });

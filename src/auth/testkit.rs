@@ -89,6 +89,7 @@ pub fn test_context(pool: PgPool) -> Arc<AuthContext> {
 pub const SUB_VIEWER: &str = "test-viewer";
 pub const SUB_PRICER: &str = "test-pricer";
 pub const SUB_ADMIN: &str = "test-admin";
+pub const SUB_AUDITOR: &str = "test-auditor";
 pub const SUB_SVC: &str = "test-svc";
 
 /// Idempotently grants the canonical subjects their roles. Tests call this
@@ -98,12 +99,14 @@ pub async fn ensure_grants(pool: &PgPool) {
     sqlx::query(
         "INSERT INTO role_grants (subject_type, subject, role, granted_by) VALUES
          ('sub', $1, 'viewer', 'testkit'), ('sub', $2, 'pricer', 'testkit'),
-         ('sub', $3, 'admin', 'testkit'), ('sub', $4, 'service', 'testkit')
+         ('sub', $3, 'admin', 'testkit'), ('sub', $4, 'auditor', 'testkit'),
+         ('sub', $5, 'service', 'testkit')
          ON CONFLICT DO NOTHING",
     )
     .bind(SUB_VIEWER)
     .bind(SUB_PRICER)
     .bind(SUB_ADMIN)
+    .bind(SUB_AUDITOR)
     .bind(SUB_SVC)
     .execute(pool)
     .await
@@ -121,6 +124,9 @@ pub fn pricer_token() -> String {
 }
 pub fn admin_token() -> String {
     token(SUB_ADMIN)
+}
+pub fn auditor_token() -> String {
+    token(SUB_AUDITOR)
 }
 pub fn svc_token() -> String {
     token(SUB_SVC)
