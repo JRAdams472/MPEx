@@ -124,44 +124,138 @@ pub async fn record(
     Ok(())
 }
 
-/// Result of a chain pass: rows checked, and on failure the first row that
-/// breaks the chain plus why.
+/// Result of a chain pass: rows checked this pass, the scope walked
+/// (`full` from genesis or `incremental` from a watermark), and on failure
+/// the first row that breaks the chain plus why.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChainVerify {
     pub checked: i64,
     pub ok: bool,
+    pub scope: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub watermark_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub first_bad_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
 
-/// Recompute every row's hash in id order, checking both linkage
-/// (`prev_hash` equals the prior row's `hash`) and content (stored `hash`
-/// equals the recomputed digest). A healthy chain returns `ok` with
-/// `checked` equal to the row count.
+/// Verify the chain, resuming from the newest recorded watermark when one
+/// exists (MPE-125). Cost is O(new events): the watermark checkpoint row is
+/// recomputed once, then only rows after it are walked. A tampered history
+/// surfaces as a checkpoint mismatch (rewrites must propagate forward to
+/// stay self-consistent) or a break inside the new rows. A *single-point*
+/// content edit before the checkpoint that leaves the chain inconsistent is
+/// only visible to `verify_chain_full` — run it after restores or suspected
+/// tampering.
 pub async fn verify_chain(pool: &PgPool) -> Result<ChainVerify, AppError> {
+    verify_chain_scoped(pool, false).await
+}
+
+/// Same checks, but always walks the whole chain from genesis — catches
+/// pre-watermark inconsistencies an incremental pass cannot see.
+pub async fn verify_chain_full(pool: &PgPool) -> Result<ChainVerify, AppError> {
+    verify_chain_scoped(pool, true).await
+}
+
+async fn verify_chain_scoped(pool: &PgPool, full: bool) -> Result<ChainVerify, AppError> {
+    // The newest watermark is the deepest verified tail. `full` ignores it.
+    let watermark: Option<(i64, String)> = if full {
+        None
+    } else {
+        sqlx::query(
+            "SELECT last_event_id, last_event_hash
+             FROM audit_verify_watermarks
+             ORDER BY last_event_id DESC LIMIT 1",
+        )
+        .fetch_optional(pool)
+        .await?
+        .map(|r| {
+            (
+                r.get::<i64, _>("last_event_id"),
+                r.get::<String, _>("last_event_hash"),
+            )
+        })
+    };
+    let scope = if watermark.is_some() {
+        "incremental"
+    } else {
+        "full"
+    };
+    let watermark_id = watermark.as_ref().map(|w| w.0);
+    let fail = |checked, first_bad_id, reason: &str| {
+        Ok(ChainVerify {
+            checked,
+            ok: false,
+            scope,
+            watermark_id,
+            first_bad_id: Some(first_bad_id),
+            reason: Some(reason.into()),
+        })
+    };
+
+    let (start_id, mut expected_prev) = match &watermark {
+        // Checkpoint self-check: the watermarked row must still exist, still
+        // store the recorded hash, and still recompute to it.
+        Some((wid, whash)) => {
+            let row = sqlx::query(
+                "SELECT occurred_at, actor_sub, action, artifact_table,
+                        artifact_key, detail, prev_hash, hash
+                 FROM audit_events WHERE id = $1",
+            )
+            .bind(wid)
+            .fetch_optional(pool)
+            .await?;
+            let Some(row) = row else {
+                return fail(0, *wid, "watermark checkpoint row is missing");
+            };
+            let stored: String = row.get("hash");
+            if stored != *whash {
+                return fail(
+                    0,
+                    *wid,
+                    "watermark checkpoint hash changed — history rewritten",
+                );
+            }
+            let recomputed = chain_hash(
+                row.get::<String, _>("prev_hash").as_str(),
+                &canonical(
+                    &row.get::<DateTime<Utc>, _>("occurred_at"),
+                    row.get::<String, _>("actor_sub").as_str(),
+                    row.get::<String, _>("action").as_str(),
+                    row.get::<Option<String>, _>("artifact_table").as_deref(),
+                    row.get::<Option<String>, _>("artifact_key").as_deref(),
+                    &row.get::<Value, _>("detail"),
+                ),
+            );
+            if recomputed != stored {
+                return fail(
+                    0,
+                    *wid,
+                    "watermark checkpoint content changed — stored hash no longer matches",
+                );
+            }
+            (*wid, whash.clone())
+        }
+        None => (0, GENESIS.to_string()),
+    };
+
     let rows = sqlx::query(
         "SELECT id, occurred_at, actor_sub, action, artifact_table,
                 artifact_key, detail, prev_hash, hash
-         FROM audit_events ORDER BY id",
+         FROM audit_events WHERE id > $1 ORDER BY id",
     )
+    .bind(start_id)
     .fetch_all(pool)
     .await?;
 
-    let mut expected_prev = GENESIS.to_string();
     for (i, row) in rows.iter().enumerate() {
         let id: i64 = row.get("id");
         let prev_hash: String = row.get("prev_hash");
         let hash: String = row.get("hash");
         if prev_hash != expected_prev {
-            return Ok(ChainVerify {
-                checked: i as i64,
-                ok: false,
-                first_bad_id: Some(id),
-                reason: Some("prev_hash does not match prior row's hash".into()),
-            });
+            return fail(i as i64, id, "prev_hash does not match prior row's hash");
         }
         let occurred_at: DateTime<Utc> = row.get("occurred_at");
         let actor_sub: String = row.get("actor_sub");
@@ -178,18 +272,37 @@ pub async fn verify_chain(pool: &PgPool) -> Result<ChainVerify, AppError> {
             &detail,
         );
         if chain_hash(&prev_hash, &canonical) != hash {
-            return Ok(ChainVerify {
-                checked: i as i64,
-                ok: false,
-                first_bad_id: Some(id),
-                reason: Some("stored hash does not match recomputed event hash".into()),
-            });
+            return fail(
+                i as i64,
+                id,
+                "stored hash does not match recomputed event hash",
+            );
         }
         expected_prev = hash;
     }
+
+    // Healthy pass: record the verified tail so the next call starts here.
+    // Nothing to watermark when the walk covered zero new rows (empty chain
+    // or unchanged tail).
+    if let Some(last) = rows.last() {
+        sqlx::query(
+            "INSERT INTO audit_verify_watermarks
+               (last_event_id, last_event_hash, checked, scope)
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(last.get::<i64, _>("id"))
+        .bind(last.get::<String, _>("hash"))
+        .bind(rows.len() as i64)
+        .bind(scope)
+        .execute(pool)
+        .await?;
+    }
+
     Ok(ChainVerify {
         checked: rows.len() as i64,
         ok: true,
+        scope,
+        watermark_id,
         first_bad_id: None,
         reason: None,
     })

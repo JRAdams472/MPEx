@@ -211,6 +211,15 @@ gate — point `SONARQUBE_TOKEN` at a token generated in the UI.
 ## Audit
 
 `audit_events` is append-only (storage-level trigger) and hash-chained;
-`GET /api/audit/verify` (admin) recomputes the chain — run it after restores
-or suspected tampering. `auth.denied` rows record 403s; 401s are log-only
-by design (audit rows for bad tokens are a DoS vector).
+`GET /api/audit/verify` (admin) checks the chain — run it after restores
+or suspected tampering. Each successful pass appends an
+`audit_verify_watermarks` row recording the verified tail, so routine
+verifies cost O(new events): the checkpoint row is recomputed once, then
+only rows after it are walked. A rewritten history breaks the checkpoint
+comparison (a consistent rewrite must propagate forward to the watermarked
+tail) or a post-checkpoint link. The residual boundary: a *single-point*
+content edit before the checkpoint that leaves the chain locally
+inconsistent is invisible to an incremental pass — `GET
+/api/audit/verify?full=true` forces a from-genesis walk for deep sweeps.
+`auth.denied` rows record 403s; 401s are log-only by design (audit rows
+for bad tokens are a DoS vector).

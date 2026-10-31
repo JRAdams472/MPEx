@@ -433,3 +433,284 @@ async fn audit_endpoints_list_and_verify() {
         .await
         .unwrap();
 }
+
+/// MPE-125: a full verify records a watermark at the walked tail; the next
+/// verify is `incremental`, reports the checkpoint it resumed from, and
+/// checks only events after it (strictly fewer than the chain length, since
+/// at least the checkpoint row itself is out of scope).
+#[tokio::test]
+async fn verify_watermark_scopes_incremental_passes() {
+    let Some(pool) = pool().await else {
+        eprintln!("DATABASE_URL unset — skipping audit test");
+        return;
+    };
+    let _guard = AUDIT_LOCK.lock().await;
+    let app = make_app(&pool);
+    let admin = testkit::admin_token();
+
+    let (status, _) = call(
+        &app,
+        "PUT",
+        "/api/decisions/audit-watermark.decision",
+        Some(&admin),
+        Some(json!({ "kind": "shared", "jdm": test_jdm() })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let full = mpex::audit::verify_chain_full(&pool).await.unwrap();
+    assert!(full.ok, "{full:?}");
+    assert_eq!(full.scope, "full");
+    assert!(full.watermark_id.is_none());
+
+    let w: i64 = sqlx::query_scalar(
+        "SELECT last_event_id FROM audit_verify_watermarks
+         ORDER BY last_event_id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("full verify records a watermark");
+
+    // A fresh event lands after the checkpoint.
+    let (status, _) = call(
+        &app,
+        "DELETE",
+        "/api/decisions/audit-watermark.decision",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let expected: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_events WHERE id > $1")
+        .bind(w)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let inc = mpex::audit::verify_chain(&pool).await.unwrap();
+    assert!(inc.ok, "{inc:?}");
+    assert_eq!(inc.scope, "incremental");
+    assert_eq!(inc.watermark_id, Some(w));
+    assert!(
+        inc.checked >= expected,
+        "walks at least the post-checkpoint rows: {inc:?}"
+    );
+    let total: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_events")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        inc.checked < total,
+        "incremental pass never re-walks the checkpointed prefix"
+    );
+}
+
+/// MPE-125: tampering past the checkpoint is caught by the incremental
+/// walk; tampering the checkpoint row itself is caught by the watermark
+/// comparison — either way history rewrites surface.
+#[tokio::test]
+async fn verify_watermark_detects_tamper() {
+    let Some(pool) = pool().await else {
+        eprintln!("DATABASE_URL unset — skipping audit test");
+        return;
+    };
+    let _guard = AUDIT_LOCK.lock().await;
+    let app = make_app(&pool);
+    let admin = testkit::admin_token();
+
+    let (status, _) = call(
+        &app,
+        "PUT",
+        "/api/decisions/audit-wtamper.decision",
+        Some(&admin),
+        Some(json!({ "kind": "shared", "jdm": test_jdm() })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let ok = mpex::audit::verify_chain(&pool).await.unwrap();
+    assert!(ok.ok, "{ok:?}");
+    let (w, whash): (i64, String) = sqlx::query_as(
+        "SELECT last_event_id, last_event_hash FROM audit_verify_watermarks
+         ORDER BY last_event_id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("watermark exists");
+
+    // Post-checkpoint tamper: a fresh event lands past the watermark;
+    // rewrite its actor.
+    let (status, _) = call(
+        &app,
+        "PUT",
+        "/api/decisions/audit-wtamper.decision",
+        Some(&admin),
+        Some(json!({ "kind": "shared", "jdm": test_jdm() })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let tail: i64 = sqlx::query_scalar("SELECT max(id) FROM audit_events")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(tail > w, "tail sits past the checkpoint");
+    sqlx::query("ALTER TABLE audit_events DISABLE TRIGGER audit_events_append_only")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE audit_events SET actor_sub = 'mallory' WHERE id = $1")
+        .bind(tail)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE audit_events ENABLE TRIGGER audit_events_append_only")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let bad = mpex::audit::verify_chain(&pool).await.unwrap();
+    assert!(!bad.ok, "post-checkpoint tamper must fail: {bad:?}");
+    assert_eq!(bad.first_bad_id, Some(tail));
+
+    sqlx::query("ALTER TABLE audit_events DISABLE TRIGGER audit_events_append_only")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE audit_events SET actor_sub = $1 WHERE id = $2")
+        .bind(testkit::SUB_ADMIN)
+        .bind(tail)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Checkpoint tamper: rewrite the watermarked row's stored hash, as a
+    // propagated history rewrite would leave it.
+    sqlx::query("UPDATE audit_events SET hash = $1 WHERE id = $2")
+        .bind("0".repeat(64))
+        .bind(w)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE audit_events ENABLE TRIGGER audit_events_append_only")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let bad = mpex::audit::verify_chain(&pool).await.unwrap();
+    assert!(!bad.ok, "checkpoint rewrite must fail: {bad:?}");
+    assert_eq!(bad.first_bad_id, Some(w));
+    assert!(
+        bad.reason.unwrap().contains("checkpoint"),
+        "flags the watermark comparison"
+    );
+
+    sqlx::query("ALTER TABLE audit_events DISABLE TRIGGER audit_events_append_only")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE audit_events SET hash = $1 WHERE id = $2")
+        .bind(&whash)
+        .bind(w)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE audit_events ENABLE TRIGGER audit_events_append_only")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let ok = mpex::audit::verify_chain(&pool).await.unwrap();
+    assert!(ok.ok, "restored chain verifies: {ok:?}");
+
+    sqlx::query("DELETE FROM decisions WHERE key = 'audit-wtamper.decision' AND status = 'draft'")
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// MPE-125: a single-point content edit *before* the checkpoint leaves the
+/// chain locally inconsistent in a way an incremental pass cannot see —
+/// but a forced full pass still walks from genesis and finds it. This is
+/// the documented boundary of watermark scoping.
+#[tokio::test]
+async fn verify_full_param_catches_pre_checkpoint_tamper() {
+    let Some(pool) = pool().await else {
+        eprintln!("DATABASE_URL unset — skipping audit test");
+        return;
+    };
+    let _guard = AUDIT_LOCK.lock().await;
+    let app = make_app(&pool);
+    let admin = testkit::admin_token();
+
+    let ok = mpex::audit::verify_chain(&pool).await.unwrap();
+    assert!(ok.ok, "{ok:?}");
+    let w: i64 = sqlx::query_scalar(
+        "SELECT last_event_id FROM audit_verify_watermarks
+         ORDER BY last_event_id DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("a watermark exists");
+    // Need a strictly-older row than the checkpoint to tamper with.
+    let old: Option<(i64, String)> =
+        sqlx::query_as("SELECT id, actor_sub FROM audit_events WHERE id < $1 ORDER BY id LIMIT 1")
+            .bind(w)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    let Some((old_id, old_actor)) = old else {
+        eprintln!("chain too short for a pre-checkpoint tamper test — skipping");
+        return;
+    };
+
+    sqlx::query("ALTER TABLE audit_events DISABLE TRIGGER audit_events_append_only")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE audit_events SET actor_sub = 'mallory' WHERE id = $1")
+        .bind(old_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE audit_events ENABLE TRIGGER audit_events_append_only")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let inc = mpex::audit::verify_chain(&pool).await.unwrap();
+    assert!(
+        inc.ok,
+        "incremental pass trusts the checkpointed prefix: {inc:?}"
+    );
+    let full = mpex::audit::verify_chain_full(&pool).await.unwrap();
+    assert!(!full.ok, "full pass catches the old tamper: {full:?}");
+    assert_eq!(full.first_bad_id, Some(old_id));
+
+    sqlx::query("ALTER TABLE audit_events DISABLE TRIGGER audit_events_append_only")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE audit_events SET actor_sub = $1 WHERE id = $2")
+        .bind(&old_actor)
+        .bind(old_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE audit_events ENABLE TRIGGER audit_events_append_only")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Endpoint level: ?full=true forces the deep walk.
+    let (status, body) = call(
+        &app,
+        "GET",
+        "/api/audit/verify?full=true",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["ok"], json!(true), "{body}");
+    assert_eq!(body["scope"], json!("full"), "{body}");
+}

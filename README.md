@@ -79,7 +79,8 @@ Web UI: http://localhost:3000 · API: http://localhost:8080 (`/healthz`, `/api/h
   hash-chained `audit_events` rows inside the mutation's transaction —
   tamper-evident and append-only at the storage layer. Admins read it via
   `GET /api/audit` (or the admin `/audit` page — filters, detail expander,
-  chain verification) and re-verify the chain via `GET /api/audit/verify`.
+  chain verification) and re-verify the chain via `GET /api/audit/verify`
+  (incremental from a verified watermark; `?full=true` walks everything).
 - **Rate-index import**: `POST /api/admin/rate-index/preview` and
   `/import` fetch the MND daily index server-side (configurable via
   `RATE_INDEX_URL`), write single-rate-at-par sheets, and stamp a

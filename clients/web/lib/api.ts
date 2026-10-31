@@ -192,10 +192,13 @@ export interface AuditEvent {
   hash: string;
 }
 
-/** `GET /api/audit/verify` result — `firstBadId`/`reason` only on a break. */
+/** `GET /api/audit/verify` result — `firstBadId`/`reason` only on a break;
+ * `watermarkId` present when the pass resumed from a checkpoint. */
 export interface AuditVerify {
   checked: number;
   ok: boolean;
+  scope: "full" | "incremental";
+  watermarkId?: number;
   firstBadId?: number;
   reason?: string;
 }

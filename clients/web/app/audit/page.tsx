@@ -153,6 +153,11 @@ function VerifyResult({ result }: { result: AuditVerify }) {
     return (
       <Alert severity="success" icon={<VerifiedUserIcon />}>
         Chain intact — {result.checked} rows verified.
+        <Typography component="span" variant="caption" sx={{ display: "block" }}>
+          {result.scope === "incremental"
+            ? `Incremental pass from checkpoint #${result.watermarkId}.`
+            : "Full scan from genesis."}
+        </Typography>
       </Alert>
     );
   }
