@@ -173,10 +173,11 @@ async fn role_gates_enforce_401_and_403() {
         return;
     };
     let app = make_app(&pool);
-    let (viewer, pricer, admin, svc) = (
+    let (viewer, pricer, admin, auditor, svc) = (
         testkit::viewer_token(),
         testkit::pricer_token(),
         testkit::admin_token(),
+        testkit::auditor_token(),
         testkit::svc_token(),
     );
     // A validly-signed token whose subject has zero grants.
@@ -192,40 +193,71 @@ async fn role_gates_enforce_401_and_403() {
     // "Allowed" means the gate passes: any non-401/403 status (the handler
     // may still 4xx the empty body — that's downstream of auth).
     let cases: &[(&str, &str, &[&str], &[&str])] = &[
-        ("GET", "/api/products", &["v", "p", "a", "s"], &[]),
+        ("GET", "/api/products", &["v", "p", "a", "u", "s"], &[]),
         (
             "POST",
             "/api/evaluate/eligibility",
-            &["v", "p", "a", "s"],
+            &["v", "p", "a", "u", "s"],
             &[],
         ),
-        ("POST", "/api/evaluate/pricing", &["v", "p", "a", "s"], &[]),
-        ("POST", "/api/validate/expression", &["v", "p", "a"], &["s"]),
-        ("POST", "/api/simulate/matrix", &["v", "p", "a"], &["s"]),
-        ("GET", "/api/decisions", &["v", "p", "a"], &["s"]),
-        ("GET", "/api/decisions/x", &["v", "p", "a"], &["s"]),
-        ("GET", "/api/expressions", &["v", "p", "a"], &["s"]),
-        ("GET", "/api/matrices", &["v", "p", "a"], &["s"]),
-        ("GET", "/api/rate-sheets", &["v", "p", "a"], &["s"]),
-        ("GET", "/api/publications", &["v", "p", "a"], &["s"]),
-        ("PUT", "/api/decisions/x", &["p", "a"], &["v", "s"]),
-        ("DELETE", "/api/decisions/x", &["p", "a"], &["v", "s"]),
-        ("PUT", "/api/expressions/x", &["p", "a"], &["v", "s"]),
-        ("DELETE", "/api/matrices/x", &["p", "a"], &["v", "s"]),
-        ("PUT", "/api/rate-sheets/x", &["p", "a"], &["v", "s"]),
-        ("PATCH", "/api/matrices/x/cells", &["p", "a"], &["v", "s"]),
+        (
+            "POST",
+            "/api/evaluate/pricing",
+            &["v", "p", "a", "u", "s"],
+            &[],
+        ),
+        (
+            "POST",
+            "/api/validate/expression",
+            &["v", "p", "a", "u"],
+            &["s"],
+        ),
+        (
+            "POST",
+            "/api/simulate/matrix",
+            &["v", "p", "a", "u"],
+            &["s"],
+        ),
+        ("GET", "/api/decisions", &["v", "p", "a", "u"], &["s"]),
+        ("GET", "/api/decisions/x", &["v", "p", "a", "u"], &["s"]),
+        ("GET", "/api/expressions", &["v", "p", "a", "u"], &["s"]),
+        ("GET", "/api/matrices", &["v", "p", "a", "u"], &["s"]),
+        ("GET", "/api/rate-sheets", &["v", "p", "a", "u"], &["s"]),
+        ("GET", "/api/publications", &["v", "p", "a", "u"], &["s"]),
+        ("PUT", "/api/decisions/x", &["p", "a"], &["v", "u", "s"]),
+        ("DELETE", "/api/decisions/x", &["p", "a"], &["v", "u", "s"]),
+        ("PUT", "/api/expressions/x", &["p", "a"], &["v", "u", "s"]),
+        ("DELETE", "/api/matrices/x", &["p", "a"], &["v", "u", "s"]),
+        ("PUT", "/api/rate-sheets/x", &["p", "a"], &["v", "u", "s"]),
+        (
+            "PATCH",
+            "/api/matrices/x/cells",
+            &["p", "a"],
+            &["v", "u", "s"],
+        ),
         (
             "PATCH",
             "/api/rate-sheets/x/cells",
             &["p", "a"],
-            &["v", "s"],
+            &["v", "u", "s"],
         ),
-        ("POST", "/api/publications", &["a"], &["v", "p", "s"]),
+        ("POST", "/api/publications", &["a"], &["v", "p", "u", "s"]),
+        ("GET", "/api/audit", &["a", "u"], &["v", "p", "s"]),
+        ("GET", "/api/audit/verify", &["a", "u"], &["v", "p", "s"]),
+        ("GET", "/api/admin/grants", &["a"], &["v", "p", "u", "s"]),
+        ("PUT", "/api/admin/grants", &["a"], &["v", "p", "u", "s"]),
+        (
+            "DELETE",
+            "/api/admin/grants/1",
+            &["a"],
+            &["v", "p", "u", "s"],
+        ),
     ];
     let token_for = |l: &str| match l {
         "v" => &viewer,
         "p" => &pricer,
         "a" => &admin,
+        "u" => &auditor,
         "s" => &svc,
         _ => unreachable!(),
     };

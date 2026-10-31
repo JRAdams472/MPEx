@@ -38,5 +38,7 @@ export function useMe() {
     canEdit: roles.includes("pricer") || roles.includes("admin"),
     canPublish: roles.includes("admin"),
     isAdmin: roles.includes("admin"),
+    /** Read-only audit surface — admin or the dedicated auditor role. */
+    canAudit: roles.includes("admin") || roles.includes("auditor"),
   };
 }

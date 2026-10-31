@@ -76,6 +76,8 @@ const EVAL_OR_PRODUCTS: &[Role] = &[Role::Viewer, Role::Service];
 const VIEWER: &[Role] = &[Role::Viewer];
 const PRICER: &[Role] = &[Role::Pricer];
 const ADMIN: &[Role] = &[Role::Admin];
+/// The audit trail read surface — admins plus the read-only auditor role.
+const AUDIT_READERS: &[Role] = &[Role::Admin, Role::Auditor];
 
 pub fn router(state: AppState) -> Router {
     // Authenticated callers (viewer+ or service): evaluation + products.
@@ -139,12 +141,20 @@ pub fn router(state: AppState) -> Router {
             role_gate,
         ));
 
-    // admin-only: publishing stamps every changed draft; the audit trail is
-    // readable + verifiable by admins only.
-    let admin = Router::new()
-        .route("/api/publications", post(publications::create))
+    // Audit trail read surface (MPE-172): admins + the read-only auditor
+    // role. Kept in its own bucket so auditor never widens the admin gate.
+    let audit = Router::new()
         .route("/api/audit", get(audit::list))
         .route("/api/audit/verify", get(audit::verify))
+        .route_layer(middleware::from_fn_with_state(
+            (state.clone(), AUDIT_READERS),
+            role_gate,
+        ));
+
+    // admin-only: publishing stamps every changed draft; grants, promotions,
+    // and rate-index imports are privileged mutations.
+    let admin = Router::new()
+        .route("/api/publications", post(publications::create))
         .route("/api/admin/grants", get(grants::list).put(grants::upsert))
         .route("/api/admin/grants/{id}", delete(grants::revoke))
         .route("/api/admin/promotions", post(publications::promote))
@@ -168,6 +178,7 @@ pub fn router(state: AppState) -> Router {
         .merge(eval)
         .merge(viewer)
         .merge(pricer)
+        .merge(audit)
         .merge(admin);
 
     // Rate limits sit inside the headers layer so 429s carry them too.

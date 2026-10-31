@@ -18,7 +18,7 @@ use crate::auth::Principal;
 use crate::error::AppError;
 
 const SUBJECT_TYPES: [&str; 3] = ["sub", "email", "aud"];
-const ROLES: [&str; 4] = ["viewer", "pricer", "admin", "service"];
+const ROLES: [&str; 5] = ["viewer", "pricer", "admin", "auditor", "service"];
 const MAX_SUBJECT_LEN: usize = 256;
 
 #[derive(Debug, Deserialize)]

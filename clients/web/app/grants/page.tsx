@@ -42,7 +42,7 @@ import {
 import { useMe } from "@/lib/me";
 
 const SUBJECT_TYPES: SubjectType[] = ["sub", "email", "aud"];
-const ROLES: Role[] = ["viewer", "pricer", "admin", "service"];
+const ROLES: Role[] = ["viewer", "pricer", "admin", "auditor", "service"];
 
 function EnvsCell({ envs }: { envs: Env[] | null }) {
   if (envs === null) {
