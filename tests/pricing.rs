@@ -90,6 +90,12 @@ const PRODUCT: &str = "P4TEST";
 const MATRIX_KEY: &str = "matrix.p4test.llpa";
 const SHARED_KEY: &str = "matrix.p4test.shared";
 
+/// Serializes the file's DB-mutating tests: the snapshot fingerprint covers
+/// ALL artifact tables, so a parallel test's writes mid-run would invalidate
+/// `pricing_lifecycle`'s byte-identical memoization assertion (same reason
+/// hardening.rs uses SEED_LOCK).
+static WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
     let req = Request::builder()
         .method(method)
@@ -163,6 +169,7 @@ async fn pricing_lifecycle() {
     let pool = PgPool::connect(&url).await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     testkit::ensure_grants(&pool).await;
+    let _guard = WRITE_LOCK.lock().await;
 
     // Clean slate for this test's artifacts.
     for (table, key) in [
@@ -460,6 +467,200 @@ async fn pricing_lifecycle() {
         .unwrap();
 }
 
+// ---------------------------------------------------------------------------
+// MPE-128: PATCH /api/rate-sheets/{key}/cells — sparse price edits on the
+// draft, with rate-key normalization and publish/eval equivalence.
+// ---------------------------------------------------------------------------
+
+const PATCH_PRODUCT: &str = "P4PATCH";
+
+async fn patch_cleanup(pool: &PgPool) {
+    sqlx::query("DELETE FROM rate_sheets WHERE key = $1")
+        .bind(PATCH_PRODUCT)
+        .execute(pool)
+        .await
+        .unwrap();
+    for table in ["decisions", "expressions", "matrices", "rate_sheets"] {
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE publication_id IN
+             (SELECT id FROM publications WHERE label LIKE 'p4-patch-%')"
+        ))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("DELETE FROM publications WHERE label LIKE 'p4-patch-%'")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM products WHERE code = $1")
+        .bind(PATCH_PRODUCT)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn rate_sheet_cell_patch() {
+    let Ok(url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping rate-sheet patch test");
+        return;
+    };
+    let pool = PgPool::connect(&url).await.unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    testkit::ensure_grants(&pool).await;
+    let _guard = WRITE_LOCK.lock().await;
+    patch_cleanup(&pool).await;
+    // Inactive product: pricing accepts it via products[] without leaking
+    // into concurrent eligibility scans.
+    sqlx::query(
+        "INSERT INTO products (code, name, loan_type, amortization, term_months, active)
+         VALUES ($1, 'P4 Patch', 'conventional', 'fixed', 360, false)
+         ON CONFLICT (code) DO UPDATE SET active = false",
+    )
+    .bind(PATCH_PRODUCT)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let app = api::router(AppState {
+        pool: pool.clone(),
+        snapshots: Arc::new(SnapshotStore::new(pool.clone())),
+        auth: Some(testkit::test_context(pool.clone())),
+        rate_limits: None,
+        rate_index: None,
+    });
+    let uri = format!("/api/rate-sheets/{PATCH_PRODUCT}/cells");
+
+    // Draft-only semantics: the product exists but has no draft → 404.
+    let (status, _) = call(
+        &app,
+        "PATCH",
+        &uri,
+        Some(json!({ "cells": { "6.5:30": 99.0 } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "no draft must 404");
+
+    let (status, body) = call(
+        &app,
+        "PUT",
+        &format!("/api/rate-sheets/{PATCH_PRODUCT}"),
+        Some(json!({ "spec": sheet_spec(100.0) })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "PUT rate sheet failed: {body}");
+
+    // Rejections — none may mutate the draft.
+    for (patch, why) in [
+        (json!({ "cells": {} }), "empty cells"),
+        (json!({ "cells": { "7.0:30": 99.0 } }), "unlisted rate"),
+        (json!({ "cells": { "6.5:60": 99.0 } }), "unlisted term"),
+        (json!({ "cells": { "6.5:30": "par" } }), "non-numeric price"),
+        (json!({ "cells": { "junk": 99.0 } }), "bad key shape"),
+        (
+            json!({ "cells": { "6.5:30": 99.0 }, "rates": [6.5] }),
+            "structural",
+        ),
+    ] {
+        let (status, body) = call(&app, "PATCH", &uri, Some(patch)).await;
+        assert!(
+            status.is_client_error(),
+            "{why} must be rejected, got {status}: {body}"
+        );
+    }
+
+    // Happy path + normalization: "6.50:30" must land on the canonical
+    // "6.5:30" key price() lookups use — a raw insert would be unreachable.
+    let (status, body) = call(
+        &app,
+        "PATCH",
+        &uri,
+        Some(json!({ "cells": { "6.50:30": 98.0 } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "PATCH failed: {body}");
+    let prices = body["spec"]["prices"].as_object().unwrap();
+    assert_eq!(prices["6.5:30"], json!(98.0), "normalized key stores");
+    assert!(!prices.contains_key("6.50:30"), "raw key must not persist");
+    assert_eq!(prices["6.75:30"], json!(99.5), "untouched cells preserved");
+
+    // Attribution: patch detail names the normalized cell ids.
+    let row = sqlx::query(
+        "SELECT actor_sub, detail FROM audit_events
+         WHERE action = 'artifact.put' AND artifact_table = 'rate_sheets'
+           AND artifact_key = $1
+         ORDER BY id DESC LIMIT 1",
+    )
+    .bind(PATCH_PRODUCT)
+    .fetch_one(&pool)
+    .await
+    .expect("patch audit row exists");
+    {
+        use sqlx::Row;
+        assert_eq!(row.get::<String, _>("actor_sub"), testkit::SUB_ADMIN);
+        let detail: Value = row.get("detail");
+        assert_eq!(detail["patch"], json!(true), "detail flags a patch");
+        assert!(
+            detail["cells"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("6.5:30")),
+            "detail lists normalized cells: {detail}"
+        );
+    }
+
+    // Equivalence: scoped publish (POST /api/publications is global and
+    // would race other tests) — pricing must see 98.0 on the 6.5 line,
+    // exactly what a full PUT of the same spec produces.
+    let pub_id: uuid::Uuid =
+        sqlx::query_scalar("INSERT INTO publications (label) VALUES ('p4-patch-v1') RETURNING id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query(
+        "INSERT INTO rate_sheets (key, status, published_at, publication_id, spec)
+         SELECT s.key, 'published', p.published_at, p.id, s.spec
+         FROM rate_sheets s, publications p
+         WHERE p.id = $2 AND s.key = $1 AND s.status = 'draft'",
+    )
+    .bind(PATCH_PRODUCT)
+    .bind(pub_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = price(
+        &app,
+        json!({ "loan": loan(), "products": [PATCH_PRODUCT], "rate": 6.5 }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "pricing failed: {body}");
+    assert_eq!(
+        body["priced"][0]["lines"][0]["basePrice"],
+        json!(98.0),
+        "patched+published price must eval like the equivalent PUT"
+    );
+
+    // Null unoffers the combo.
+    let (status, body) = call(
+        &app,
+        "PATCH",
+        &uri,
+        Some(json!({ "cells": { "6.5:30": null } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "null patch failed: {body}");
+    assert!(
+        !body["spec"]["prices"]
+            .as_object()
+            .unwrap()
+            .contains_key("6.5:30"),
+        "null removes the price cell: {body}"
+    );
+
+    patch_cleanup(&pool).await;
+}
+
 /// Warm-path latency proof (MPE-152, Zara perf target): a published
 /// catalog priced N times with loan variation defeating memoization must
 /// stay under 15 ms per call. Reports min/median/p95 of both the
@@ -478,6 +679,7 @@ async fn warm_path_pricing_under_15ms() {
     let pool = PgPool::connect(&url).await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     testkit::ensure_grants(&pool).await;
+    let _guard = WRITE_LOCK.lock().await;
 
     sqlx::query("DELETE FROM matrices WHERE key = $1")
         .bind(BENCH_MATRIX)

@@ -326,6 +326,47 @@ async fn rate_index_posts_use_mutation_bucket() {
     assert_eq!(s, StatusCode::OK);
 }
 
+/// PATCH is a mutation too (MPE-128): cell-patch requests draw the tight
+/// mutation bucket, not just the loose global one.
+#[tokio::test]
+async fn patch_uses_mutation_bucket() {
+    let Some(pool) = pool().await else {
+        eprintln!("DATABASE_URL unset — skipping edge test");
+        return;
+    };
+    // global=3, mutations=1 on the shared "unknown" bucket.
+    let app = make_app_with_limits(&pool, Some(Arc::new(EdgeLimits::new(3, 1))));
+    let admin = testkit::admin_token();
+    let patch = || {
+        req(
+            "PATCH",
+            "/api/matrices/edge-patch/cells",
+            Some(&admin),
+            Some(json!({ "cells": { "rA:cX": 0.5 } })),
+            None,
+        )
+    };
+
+    // PATCH #1: global(1) + mutation(1) → reaches the handler, which 404s
+    // (no draft) — proof it consumed both tokens, not a 429.
+    let s = status(&app, patch()).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    // PATCH #2: mutation bucket empty → 429 mutation + Retry-After. Were
+    // PATCH classified global-only, this would 404 again instead.
+    let res = app.clone().oneshot(patch()).await.unwrap();
+    assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(res.headers().contains_key("retry-after"));
+    let body: Value =
+        serde_json::from_slice(&to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(body["error"], json!("rate limited (mutation bucket)"));
+
+    // The global bucket still had budget — the 429 came from the mutation
+    // tier specifically.
+    let s = status(&app, req("GET", "/api/health", None, None, None)).await;
+    assert_eq!(s, StatusCode::OK);
+}
+
 /// With XFF trusted, each forwarded IP gets its own bucket.
 #[tokio::test]
 async fn xff_partitions_buckets_when_trusted() {

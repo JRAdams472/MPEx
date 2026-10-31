@@ -159,7 +159,12 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
 }
 
 /// Evaluate a decision key through the snapshot loader for a revision.
-async fn eval_at(snapshots: &SnapshotStore, revision: Revision, ctx: Value) -> Value {
+async fn eval_at(
+    snapshots: &SnapshotStore,
+    revision: Revision,
+    key: &'static str,
+    ctx: Value,
+) -> Value {
     let loader = snapshots.loader_for(revision, Env::Dev).await.unwrap();
     let engine = DecisionEngine::default().with_loader(loader);
     tokio::task::spawn_blocking(move || {
@@ -167,7 +172,7 @@ async fn eval_at(snapshots: &SnapshotStore, revision: Revision, ctx: Value) -> V
             .enable_all()
             .build()
             .unwrap();
-        rt.block_on(engine.evaluate_serialized(MATRIX_KEY, ctx.into(), Default::default()))
+        rt.block_on(engine.evaluate_serialized(key, ctx.into(), Default::default()))
             .unwrap()
     })
     .await
@@ -259,7 +264,13 @@ async fn matrix_publish_lifecycle() {
         .contains(&json!(MATRIX_KEY)));
     let t1 = pub_v1["publishedAt"].as_str().unwrap().to_string();
 
-    let res = eval_at(&snapshots, Revision::LatestPublished, demo_ctx()).await;
+    let res = eval_at(
+        &snapshots,
+        Revision::LatestPublished,
+        MATRIX_KEY,
+        demo_ctx(),
+    )
+    .await;
     assert_eq!(res["result"]["value"].as_f64().unwrap(), -0.25);
 
     // --- Publish v2 → two asOf versions stay separable ------------------------
@@ -288,9 +299,21 @@ async fn matrix_publish_lifecycle() {
             .unwrap()
             .with_timezone(&chrono::Utc)
     };
-    let res = eval_at(&snapshots, Revision::AsOf(as_of(&t1)), demo_ctx()).await;
+    let res = eval_at(
+        &snapshots,
+        Revision::AsOf(as_of(&t1)),
+        MATRIX_KEY,
+        demo_ctx(),
+    )
+    .await;
     assert_eq!(res["result"]["value"].as_f64().unwrap(), -0.25);
-    let res = eval_at(&snapshots, Revision::AsOf(as_of(&t2)), demo_ctx()).await;
+    let res = eval_at(
+        &snapshots,
+        Revision::AsOf(as_of(&t2)),
+        MATRIX_KEY,
+        demo_ctx(),
+    )
+    .await;
     assert_eq!(res["result"]["value"].as_f64().unwrap(), 1.5);
 
     // Draft listing vs published-asOf listing.
@@ -342,4 +365,182 @@ async fn matrix_publish_lifecycle() {
         .execute(&pool)
         .await
         .unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// MPE-128: PATCH /api/matrices/{key}/cells — sparse cell edits on the draft.
+// ---------------------------------------------------------------------------
+
+const PATCH_KEY: &str = "matrix.p3patch.llpa";
+
+async fn patch_cleanup(pool: &PgPool) {
+    sqlx::query("DELETE FROM matrices WHERE key = $1")
+        .bind(PATCH_KEY)
+        .execute(pool)
+        .await
+        .unwrap();
+    for table in ["decisions", "expressions", "matrices", "rate_sheets"] {
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE publication_id IN
+             (SELECT id FROM publications WHERE label LIKE 'p3-patch-%')"
+        ))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("DELETE FROM publications WHERE label LIKE 'p3-patch-%'")
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn matrix_cell_patch_lifecycle() {
+    let Ok(url) = std::env::var("DATABASE_URL") else {
+        eprintln!("DATABASE_URL unset — skipping matrix patch test");
+        return;
+    };
+    let pool = PgPool::connect(&url).await.unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    testkit::ensure_grants(&pool).await;
+    patch_cleanup(&pool).await;
+
+    let snapshots = Arc::new(SnapshotStore::new(pool.clone()));
+    let app = api::router(AppState {
+        pool: pool.clone(),
+        snapshots: snapshots.clone(),
+        auth: Some(testkit::test_context(pool.clone())),
+        rate_limits: None,
+        rate_index: None,
+    });
+    let uri = format!("/api/matrices/{PATCH_KEY}/cells");
+
+    // Draft-only semantics: PATCH never seeds a draft from published/nothing.
+    let (status, _) = call(
+        &app,
+        "PATCH",
+        &uri,
+        Some(json!({ "cells": { "rA:cX": 0.5 } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "no draft must 404");
+
+    let (status, body) = call(
+        &app,
+        "PUT",
+        &format!("/api/matrices/{PATCH_KEY}"),
+        Some(json!({ "kind": "llpa", "spec": spec_with_cell(-0.25) })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "PUT matrix failed: {body}");
+
+    // Rejections: every malformed patch leaves the draft untouched.
+    for (patch, why) in [
+        (json!({ "cells": {} }), "empty cells"),
+        (json!({ "cells": { "nope:cX": 0.1 } }), "unknown row"),
+        (json!({ "cells": { "rA:nope": 0.1 } }), "unknown col"),
+        (json!({ "cells": { "rA:cX": "par" } }), "non-numeric value"),
+        (
+            json!({ "cells": { "rA:cX": null, "rAcX": 0.1 } }),
+            "no colon",
+        ),
+        (
+            json!({ "cells": { "rA:cX": 0.1 }, "rows": [] }),
+            "structural edit",
+        ),
+    ] {
+        let (status, body) = call(&app, "PATCH", &uri, Some(patch)).await;
+        assert!(
+            status.is_client_error(),
+            "{why} must be rejected, got {status}: {body}"
+        );
+    }
+    let (status, body) = call(&app, "GET", &format!("/api/matrices/{PATCH_KEY}"), None).await;
+    assert_eq!(
+        body["draft"]["spec"]["cells"]["rA:cX"],
+        json!(-0.25),
+        "rejected patches must not mutate the draft: {status} {body}"
+    );
+
+    // Happy path: sparse numeric edit returns the normal artifact row shape.
+    let (status, body) = call(
+        &app,
+        "PATCH",
+        &uri,
+        Some(json!({ "cells": { "rA:cX": 1.5 } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "PATCH failed: {body}");
+    assert_eq!(body["status"], "draft");
+    assert_eq!(body["spec"]["cells"]["rA:cX"], json!(1.5));
+    assert!(body["jdm"].is_object(), "PATCH recompiles the draft jdm");
+
+    // Attribution: the put-variant audit row names the patched cells.
+    let row = sqlx::query(
+        "SELECT actor_sub, detail FROM audit_events
+         WHERE action = 'artifact.put' AND artifact_table = 'matrices'
+           AND artifact_key = $1
+         ORDER BY id DESC LIMIT 1",
+    )
+    .bind(PATCH_KEY)
+    .fetch_one(&pool)
+    .await
+    .expect("patch audit row exists");
+    {
+        use sqlx::Row;
+        assert_eq!(row.get::<String, _>("actor_sub"), testkit::SUB_ADMIN);
+        let detail: Value = row.get("detail");
+        assert_eq!(detail["patch"], json!(true), "detail flags a patch");
+        assert!(
+            detail["cells"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("rA:cX")),
+            "detail lists patched cells: {detail}"
+        );
+    }
+
+    // Equivalence: publish the patched draft through a scoped publication
+    // (POST /api/publications is global and would race other tests) — eval
+    // must see 1.5, exactly what PUT of spec_with_cell(1.5) produces.
+    let pub_id: uuid::Uuid =
+        sqlx::query_scalar("INSERT INTO publications (label) VALUES ('p3-patch-v1') RETURNING id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query(
+        "INSERT INTO matrices (key, status, published_at, publication_id,
+                               kind, product_code, spec, jdm)
+         SELECT s.key, 'published', p.published_at, p.id,
+                s.kind, s.product_code, s.spec, s.jdm
+         FROM matrices s, publications p
+         WHERE p.id = $2 AND s.key = $1 AND s.status = 'draft'",
+    )
+    .bind(PATCH_KEY)
+    .bind(pub_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let res = eval_at(&snapshots, Revision::LatestPublished, PATCH_KEY, demo_ctx()).await;
+    assert_eq!(
+        res["result"]["value"].as_f64().unwrap(),
+        1.5,
+        "patched+published cell must eval like the equivalent PUT"
+    );
+
+    // Null depopulates the cell.
+    let (status, body) = call(
+        &app,
+        "PATCH",
+        &uri,
+        Some(json!({ "cells": { "rA:cX": null } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "null patch failed: {body}");
+    assert!(
+        body["spec"]["cells"].as_object().unwrap().is_empty(),
+        "null removes the cell: {body}"
+    );
+
+    patch_cleanup(&pool).await;
 }

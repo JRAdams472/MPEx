@@ -213,6 +213,13 @@ async fn role_gates_enforce_401_and_403() {
         ("PUT", "/api/expressions/x", &["p", "a"], &["v", "s"]),
         ("DELETE", "/api/matrices/x", &["p", "a"], &["v", "s"]),
         ("PUT", "/api/rate-sheets/x", &["p", "a"], &["v", "s"]),
+        ("PATCH", "/api/matrices/x/cells", &["p", "a"], &["v", "s"]),
+        (
+            "PATCH",
+            "/api/rate-sheets/x/cells",
+            &["p", "a"],
+            &["v", "s"],
+        ),
         ("POST", "/api/publications", &["a"], &["v", "p", "s"]),
     ];
     let token_for = |l: &str| match l {

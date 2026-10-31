@@ -38,6 +38,8 @@ export const apiPost = <T>(path: string, body?: unknown) =>
   apiWrite<T>("POST", path, body);
 export const apiPut = <T>(path: string, body: unknown) =>
   apiWrite<T>("PUT", path, body);
+export const apiPatch = <T>(path: string, body: unknown) =>
+  apiWrite<T>("PATCH", path, body);
 export const apiDelete = (path: string) => apiWrite("DELETE", path);
 
 /** Environment lanes (MPE-153): dev is the working lane; qa/uat/prod hold
@@ -131,6 +133,10 @@ export interface RateIndexImportRow {
   publicationId: string | null;
   createdAt: string;
 }
+
+/** Sparse cell update for `PATCH …/{key}/cells` (MPE-128): cell id ->
+ *  numeric value, or null to depopulate/unoffer the cell. */
+export type CellPatch = Record<string, number | null>;
 
 export interface ArtifactListItem {
   key: string;
@@ -350,6 +356,11 @@ export const endpoints = {
     apiPut<ArtifactRow>(`/api/matrices/${encodeURIComponent(key)}`, body),
   deleteMatrix: (key: string) =>
     apiDelete(`/api/matrices/${encodeURIComponent(key)}`),
+  /** Sparse draft cell updates — `"rowId:colId"` -> number | null (MPE-128). */
+  patchMatrixCells: (key: string, cells: CellPatch) =>
+    apiPatch<ArtifactRow>(`/api/matrices/${encodeURIComponent(key)}/cells`, {
+      cells,
+    }),
   simulateMatrix: (spec: unknown, context: unknown) =>
     apiPost<SimulateResult>("/api/simulate/matrix", { spec, context }),
   rateSheets: (asOf?: string, env?: Env) =>
@@ -362,6 +373,11 @@ export const endpoints = {
     apiPut<ArtifactRow>(`/api/rate-sheets/${encodeURIComponent(key)}`, body),
   deleteRateSheet: (key: string) =>
     apiDelete(`/api/rate-sheets/${encodeURIComponent(key)}`),
+  /** Sparse draft price updates — `"rate:term"` -> number | null (MPE-128). */
+  patchRateSheetCells: (key: string, cells: CellPatch) =>
+    apiPatch<ArtifactRow>(`/api/rate-sheets/${encodeURIComponent(key)}/cells`, {
+      cells,
+    }),
   publications: () => apiGet<{ publications: Publication[] }>("/api/publications"),
   publication: (id: string) =>
     apiGet<Publication>(`/api/publications/${encodeURIComponent(id)}`),

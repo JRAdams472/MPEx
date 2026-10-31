@@ -86,6 +86,10 @@ impl RateSheetSpec {
 
 /// Rates serialize in keys like "6.5" — normalize via ryu-style shortest
 /// round-trip so 6.50 and 6.5 collide as intended.
+pub fn rate_key(rate: f64) -> String {
+    format!("{rate}")
+}
+
 /// Non-empty checks plus per-element value constraints, in the original order:
 /// rates empty, lockTerms empty, rate values, term values.
 fn validate_lists(rates: &[f64], lock_terms: &[u32]) -> Result<(), String> {
@@ -116,11 +120,6 @@ fn validate_uniques(rates: &[f64], lock_terms: &[u32]) -> Result<(), String> {
         return Err("duplicate term in lockTerms".into());
     }
     Ok(())
-}
-
-fn rate_key(rate: f64) -> String {
-    let s = format!("{rate}");
-    s
 }
 
 fn split_price_key(key: &str) -> Result<(String, u32), String> {
