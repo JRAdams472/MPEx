@@ -16,6 +16,7 @@ only. Compose fails closed on any unset secret.
 | `DEX_MPEX_SVC_SECRET` | `dex` (client `mpex-svc`) | Service-token client secret. |
 | `DEX_MPEX_CI_SECRET` | `dex` (client `mpex-ci`) | CI/automation client secret. |
 | `SESSION_SECRET` | `web` | JWE key for `mpex_session` cookies — `openssl rand -hex 32`. |
+| `SESSION_MAX_AGE_S` | `web` | Session-cookie ceiling (default 43200 = 12h); the cookie is further bounded by the refresh grant's expiry when the IdP exposes it. |
 | `SEQ_ADMIN_PASSWORD_HASH` | `seq` | First-boot admin seed (`SEQ_FIRSTRUN_*`) — salted hash, not plaintext: `echo 'pw' \| docker run --rm -i datalust/seq config hash`. |
 | `SEQ_API_KEY` | `api` | Seq ingest key, `x-seq-apikey` header. Create after first boot. |
 
