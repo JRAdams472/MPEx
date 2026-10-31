@@ -1,3 +1,4 @@
+pub mod compile_cache;
 pub mod loader;
 pub mod matrix;
 pub mod publish;
