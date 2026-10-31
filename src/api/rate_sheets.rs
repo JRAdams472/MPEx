@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::api::AppState;
 use crate::error::AppError;
-use crate::rules::rate_sheet::RateSheetSpec;
+use crate::rules::rate_sheet::{rate_key, RateSheetSpec};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -203,6 +203,126 @@ pub async fn put(
             artifact_key: Some(key.clone()),
             detail: json!({
                 "contentHash": crate::audit::content_hash(&req.spec),
+            }),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(row_json(row)))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PatchCells {
+    /// Sparse price updates: `"<rate>:<lockTermDays>"` -> numeric price, or
+    /// null to unoffer the combo (MPE-128). Rates/terms must already be
+    /// listed — this endpoint never adds grid structure.
+    pub cells: serde_json::Map<String, Value>,
+}
+
+/// Sparse cell updates against the current draft spec — the ops-friendly
+/// alternative to full-spec PUT (MPE-128). 404 without a draft; never seeds
+/// one from published.
+pub async fn patch_cells(
+    State(state): State<AppState>,
+    principal: crate::auth::Principal,
+    Path(key): Path<String>,
+    Json(req): Json<PatchCells>,
+) -> Result<Json<Value>, AppError> {
+    super::validate::validate_key(&key)?;
+    if req.cells.is_empty() {
+        return Err(AppError::BadRequest("cells must be non-empty".into()));
+    }
+
+    let mut tx = state.pool.begin().await?;
+    let row = sqlx::query_as::<_, SheetRow>(&format!(
+        "SELECT {ROW_COLS} FROM rate_sheets WHERE key = $1 AND status = 'draft' FOR UPDATE"
+    ))
+    .bind(&key)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("draft rate sheet {key}")))?;
+
+    let parsed =
+        RateSheetSpec::parse(&row.5).map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
+    let mut spec_json = row.5.clone();
+    let prices_json = spec_json
+        .as_object_mut()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("draft spec is not an object")))?
+        .entry("prices".to_string())
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("draft spec prices is not an object")))?;
+    let mut patched: Vec<String> = Vec::with_capacity(req.cells.len());
+    for (cell_id, value) in &req.cells {
+        let (rate_s, term_s) = cell_id.split_once(':').ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "cell id must be \"<rate>:<term>\", got {cell_id:?}"
+            ))
+        })?;
+        // Normalize through the same rate_key rules as spec validation so
+        // "6.50" and "6.5" collide identically here.
+        let rate: f64 = rate_s.parse().map_err(|_| {
+            AppError::BadRequest(format!("cell {cell_id:?} has a non-numeric rate"))
+        })?;
+        let term: u32 = term_s.parse().map_err(|_| {
+            AppError::BadRequest(format!("cell {cell_id:?} has a non-integer term"))
+        })?;
+        if !parsed.rates.iter().any(|r| rate_key(*r) == rate_key(rate)) {
+            return Err(AppError::BadRequest(format!(
+                "cell {cell_id:?} references unlisted rate"
+            )));
+        }
+        if !parsed.lock_terms.contains(&term) {
+            return Err(AppError::BadRequest(format!(
+                "cell {cell_id:?} references unlisted lock term"
+            )));
+        }
+        // Store the normalized key — price() lookups use rate_key, so a raw
+        // "6.50:30" insert would silently never match.
+        let norm_id = format!("{}:{}", rate_key(rate), term);
+        match value {
+            Value::Null => {
+                prices_json.remove(&norm_id);
+            }
+            Value::Number(n) if n.as_f64().is_some_and(f64::is_finite) => {
+                prices_json.insert(norm_id.clone(), value.clone());
+            }
+            _ => {
+                return Err(AppError::BadRequest(format!(
+                    "cell {cell_id:?} value must be a finite number or null (remove)"
+                )))
+            }
+        }
+        patched.push(norm_id);
+    }
+    patched.sort_unstable();
+    patched.dedup();
+
+    // Re-check size and re-parse the patched spec so a PATCH'd draft is
+    // identical to the equivalent full-spec PUT.
+    super::validate::validate_spec_size(&spec_json, "spec")?;
+    RateSheetSpec::parse(&spec_json).map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
+
+    let row = sqlx::query_as::<_, SheetRow>(&format!(
+        "UPDATE rate_sheets SET spec = $2, updated_at = now()
+         WHERE key = $1 AND status = 'draft' RETURNING {ROW_COLS}"
+    ))
+    .bind(&key)
+    .bind(&spec_json)
+    .fetch_one(&mut *tx)
+    .await?;
+    crate::audit::record(
+        &mut tx,
+        &principal,
+        crate::audit::Event {
+            action: crate::audit::action::ARTIFACT_PUT,
+            artifact_table: Some("rate_sheets"),
+            artifact_key: Some(key.clone()),
+            detail: json!({
+                "patch": true,
+                "cells": patched,
+                "contentHash": crate::audit::content_hash(&spec_json),
             }),
         },
     )

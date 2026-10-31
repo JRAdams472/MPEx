@@ -15,7 +15,7 @@ use axum::extract::{Request, State};
 use axum::http::{header, HeaderValue};
 use axum::middleware::Next;
 use axum::response::Response;
-use axum::routing::{delete, get, post, put};
+use axum::routing::{delete, get, patch, post, put};
 use axum::{middleware, Json, Router};
 use std::sync::Arc;
 
@@ -125,9 +125,14 @@ pub fn router(state: AppState) -> Router {
             "/api/matrices/{key}",
             put(matrices::put).delete(matrices::delete),
         )
+        .route("/api/matrices/{key}/cells", patch(matrices::patch_cells))
         .route(
             "/api/rate-sheets/{key}",
             put(rate_sheets::put).delete(rate_sheets::delete),
+        )
+        .route(
+            "/api/rate-sheets/{key}/cells",
+            patch(rate_sheets::patch_cells),
         )
         .route_layer(middleware::from_fn_with_state(
             (state.clone(), PRICER),

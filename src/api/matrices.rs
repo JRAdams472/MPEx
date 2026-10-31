@@ -264,6 +264,122 @@ pub async fn put(
     Ok(Json(row_json(row)))
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PatchCells {
+    /// Sparse cell updates: `"<rowId>:<colId>"` -> numeric value, or null to
+    /// depopulate the cell (MPE-128). Row/col ids must already exist — this
+    /// endpoint never adds axes or other structure.
+    pub cells: serde_json::Map<String, Value>,
+}
+
+/// Sparse cell updates against the current draft spec — the ops-friendly
+/// alternative to full-spec PUT (MPE-128). Re-parses and recompiles the
+/// patched spec so the stored draft is byte-equivalent to the same edit made
+/// via PUT. 404 without a draft; never seeds one from published.
+pub async fn patch_cells(
+    State(state): State<AppState>,
+    principal: crate::auth::Principal,
+    Path(key): Path<String>,
+    Json(req): Json<PatchCells>,
+) -> Result<Json<Value>, AppError> {
+    super::validate::validate_key(&key)?;
+    if req.cells.is_empty() {
+        return Err(AppError::BadRequest("cells must be non-empty".into()));
+    }
+
+    let mut tx = state.pool.begin().await?;
+    let row = sqlx::query_as::<_, MatrixRow>(&format!(
+        "SELECT {ROW_COLS} FROM matrices WHERE key = $1 AND status = 'draft' FOR UPDATE"
+    ))
+    .bind(&key)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("draft matrix {key}")))?;
+
+    // The parsed spec is the source of truth for axis ids; the patch merges
+    // into the raw JSON so spec fields the struct ignores can't be dropped.
+    let parsed = MatrixSpec::parse(&row.7).map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
+    let mut spec_json = row.7.clone();
+    let cells_json = spec_json
+        .as_object_mut()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("draft spec is not an object")))?
+        .entry("cells".to_string())
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("draft spec cells is not an object")))?;
+    let mut patched: Vec<String> = Vec::with_capacity(req.cells.len());
+    for (cell_id, value) in &req.cells {
+        let (row_id, col_id) = cell_id.split_once(':').ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "cell id must be \"<rowId>:<colId>\", got {cell_id:?}"
+            ))
+        })?;
+        if !parsed.rows.iter().any(|r| r.id == row_id) {
+            return Err(AppError::BadRequest(format!(
+                "cell {cell_id:?} references unknown row {row_id:?}"
+            )));
+        }
+        if !parsed.cols.iter().any(|c| c.id == col_id) {
+            return Err(AppError::BadRequest(format!(
+                "cell {cell_id:?} references unknown col {col_id:?}"
+            )));
+        }
+        match value {
+            Value::Null => {
+                cells_json.remove(cell_id);
+            }
+            Value::Number(n) if n.as_f64().is_some_and(f64::is_finite) => {
+                cells_json.insert(cell_id.clone(), value.clone());
+            }
+            _ => {
+                return Err(AppError::BadRequest(format!(
+                    "cell {cell_id:?} value must be a finite number or null (remove)"
+                )))
+            }
+        }
+        patched.push(cell_id.clone());
+    }
+    patched.sort_unstable();
+    patched.dedup();
+
+    // Round-trip through size + parse + compile so a PATCH'd draft is
+    // identical to the equivalent full-spec PUT.
+    super::validate::validate_spec_size(&spec_json, "spec")?;
+    let parsed =
+        MatrixSpec::parse(&spec_json).map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
+    let jdm = parsed
+        .to_jdm()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
+
+    let row = sqlx::query_as::<_, MatrixRow>(&format!(
+        "UPDATE matrices SET spec = $2, jdm = $3, updated_at = now()
+         WHERE key = $1 AND status = 'draft' RETURNING {ROW_COLS}"
+    ))
+    .bind(&key)
+    .bind(&spec_json)
+    .bind(&jdm)
+    .fetch_one(&mut *tx)
+    .await?;
+    crate::audit::record(
+        &mut tx,
+        &principal,
+        crate::audit::Event {
+            action: crate::audit::action::ARTIFACT_PUT,
+            artifact_table: Some("matrices"),
+            artifact_key: Some(key.clone()),
+            detail: json!({
+                "patch": true,
+                "cells": patched,
+                "contentHash": crate::audit::content_hash(&spec_json),
+            }),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(row_json(row)))
+}
+
 /// Deletes the draft only; published history is immutable and stays.
 pub async fn delete(
     State(state): State<AppState>,

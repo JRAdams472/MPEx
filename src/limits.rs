@@ -82,7 +82,10 @@ fn env_u32(name: &str, default: u32) -> u32 {
 /// (`/api/admin/rate-index/preview` fetches an external page — a flood would
 /// amplify upstream).
 fn is_mutation(req: &Request) -> bool {
-    if matches!(req.method(), &Method::PUT | &Method::DELETE) {
+    if matches!(
+        req.method(),
+        &Method::PUT | &Method::DELETE | &Method::PATCH
+    ) {
         return true;
     }
     req.method() == Method::POST
