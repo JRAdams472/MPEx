@@ -179,6 +179,66 @@ export interface ArtifactDetail {
   history: HistoryEntry[];
 }
 
+/** One `audit_events` row as returned by `GET /api/audit` (MPE-121). */
+export interface AuditEvent {
+  id: number;
+  occurredAt: string;
+  actorSub: string;
+  action: string;
+  artifactTable: string | null;
+  artifactKey: string | null;
+  detail: Record<string, unknown>;
+  prevHash: string;
+  hash: string;
+}
+
+/** `GET /api/audit/verify` result — `firstBadId`/`reason` only on a break. */
+export interface AuditVerify {
+  checked: number;
+  ok: boolean;
+  firstBadId?: number;
+  reason?: string;
+}
+
+/** Filters for `GET /api/audit` — mirrors the server's AuditQuery. */
+export interface AuditQuery {
+  actor?: string;
+  action?: string;
+  table?: string;
+  key?: string;
+  /** RFC3339 bounds on occurred_at. */
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/** Actions the audit chain records (audit::action constants). */
+export const AUDIT_ACTIONS = [
+  "artifact.put",
+  "artifact.delete",
+  "publication.create",
+  "auth.denied",
+  "grant.put",
+  "grant.delete",
+  "rate_index.import",
+  "product.rate_config.put",
+  "promotion.create",
+] as const;
+
+/** artifact_table values seen in audit detail (promotions audit under
+ *  `publications`). */
+export const AUDIT_TABLES = [
+  "decisions",
+  "expressions",
+  "matrices",
+  "rate_sheets",
+  "publications",
+  "role_grants",
+  "products",
+  "rate_index_imports",
+] as const;
+
 export type SubjectType = "sub" | "email" | "aud";
 export type Role = "viewer" | "pricer" | "admin" | "service";
 
@@ -390,6 +450,19 @@ export const endpoints = {
   upsertGrant: (body: GrantUpsert) =>
     apiPut<{ grant: Grant; created: boolean }>("/api/admin/grants", body),
   revokeGrant: (id: number) => apiDelete(`/api/admin/grants/${id}`),
+  /** Filtered, paginated audit trail (admin; MPE-121). */
+  auditEvents: (q: AuditQuery = {}) => {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(q)) {
+      if (v !== undefined && v !== "") params.set(k, String(v));
+    }
+    const qs = params.toString();
+    return apiGet<{ events: AuditEvent[] }>(
+      `/api/audit${qs ? `?${qs}` : ""}`,
+    );
+  },
+  /** Recompute the whole hash chain — `{checked, ok, firstBadId?, reason?}`. */
+  auditVerify: () => apiGet<AuditVerify>("/api/audit/verify"),
   rateIndex: () =>
     apiGet<{ indexLabels: string[]; imports: RateIndexImportRow[] }>(
       "/api/rate-index",
