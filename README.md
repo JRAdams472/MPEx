@@ -14,7 +14,9 @@ mortgage product eligibility and pricing. Rules are metadata-driven and executed
   in one request.
 - **Adjustment matrices** are edited excel-style: each row and column is a ZEN expression,
   and each cell is the adjustment that applies when both its row and column rules are true.
-  Matrices compile to Zen decision tables at publish time.
+  Matrices compile to Zen decision tables at publish time. Single-cell ops edits are also
+  exposed as `PATCH /api/matrices/{key}/cells` (and symmetrically
+  `PATCH /api/rate-sheets/{key}/cells`) — sparse, draft-only, pricer-gated.
 - **Rate sheets** are per-product grids (note-rate rows × lock-term columns → price) tied to
   a **publication** stamped with a publish date/time — so historic pricing can be re-run by
   passing an `asOf` timestamp.
