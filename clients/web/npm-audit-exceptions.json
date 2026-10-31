@@ -11,6 +11,15 @@
       "review": "Remove when @gorules/jdm-editor ships fixed transitives (>1.52.0); Dependabot will surface the release."
     },
     {
+      "id": "GHSA-g3hv-75wg-m249",
+      "package": "minimatch",
+      "via": "@gorules/jdm-editor → exceljs → archiver (glob/readdir-glob)",
+      "scope": "prod",
+      "severity": "moderate",
+      "justification": "DoS via globparts amplification (CWE-405) in minimatch <11.0.1. Reached only through jdm-editor's spreadsheet machinery; the editor loads client-side (ssr:false) for authenticated pricer/admin users, so worst case is a browser-tab DoS from a crafted glob pattern — no server exposure. Only 11.0.1+ is patched; the dependency tree pins minimatch at majors 3/5/9/10 via glob@7, readdir-glob, and rimraf, so an npm override would force a cross-major replacement on those consumers — the same breakage risk that rules out the zod override. Tracked in MPE-123.",
+      "review": "Remove when @gorules/jdm-editor ships updated transitives (>1.52.0) or minimatch backports a fix to the pinned majors."
+    },
+    {
       "id": "GHSA-gcqx-w48m-w2h4",
       "package": "deepmerge",
       "via": "jest-config (dev-only)",
