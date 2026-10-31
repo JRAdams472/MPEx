@@ -19,6 +19,7 @@ import GridOnIcon from "@mui/icons-material/GridOn";
 import TableChartIcon from "@mui/icons-material/TableChart";
 import ScienceIcon from "@mui/icons-material/Science";
 import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
+import FactCheckIcon from "@mui/icons-material/FactCheck";
 import PublishIcon from "@mui/icons-material/Publish";
 import HistoryIcon from "@mui/icons-material/History";
 import LogoutIcon from "@mui/icons-material/Logout";
@@ -44,6 +45,7 @@ const NAV = [
   { href: "/publications", label: "Publications", icon: <HistoryIcon /> },
   { href: "/sandbox", label: "Sandbox", icon: <ScienceIcon /> },
   { href: "/grants", label: "Grants", icon: <AdminPanelSettingsIcon />, adminOnly: true },
+  { href: "/audit", label: "Audit", icon: <FactCheckIcon />, adminOnly: true },
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
