@@ -243,7 +243,7 @@ export const AUDIT_TABLES = [
 ] as const;
 
 export type SubjectType = "sub" | "email" | "aud";
-export type Role = "viewer" | "pricer" | "admin" | "service";
+export type Role = "viewer" | "pricer" | "admin" | "auditor" | "service";
 
 /** A role_grants row (admin surface). `envs` is null = unrestricted,
  *  [] = no lanes permitted, or a lane list (MPE-153/MPE-159). */

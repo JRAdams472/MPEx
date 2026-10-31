@@ -8,6 +8,7 @@ INSERT INTO role_grants (subject_type, subject, role, granted_by) VALUES
   ('email', 'admin@mpex.dev',  'admin',   'dev-seed'),
   ('email', 'pricer@mpex.dev', 'pricer',  'dev-seed'),
   ('email', 'viewer@mpex.dev', 'viewer',  'dev-seed'),
+  ('email', 'auditor@mpex.dev', 'auditor', 'dev-seed'),
   ('aud',   'mpex-svc',        'service', 'dev-seed'),
   -- Automation identity (CI seeding, tooling) — aud-keyed like mpex-svc.
   ('aud',   'mpex-ci',         'admin',   'dev-seed')

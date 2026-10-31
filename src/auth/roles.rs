@@ -8,15 +8,17 @@ use serde::Serialize;
 use sqlx::PgPool;
 use tokio::sync::Mutex;
 
-/// Coarse-grained roles: `Viewer < Pricer < Admin` for humans; `Service` is
-/// standalone — machine tokens (client-credentials) may evaluate and read
-/// products only, never browse or mutate admin artifacts.
+/// Coarse-grained roles: `Viewer < Pricer < Admin` for humans, `Auditor` a
+/// viewer-level side branch that also reads the audit trail (MPE-172), and
+/// `Service` standalone — machine tokens (client-credentials) may evaluate
+/// and read products only, never browse or mutate admin artifacts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     Viewer,
     Pricer,
     Admin,
+    Auditor,
     Service,
 }
 
@@ -26,6 +28,7 @@ impl Role {
             "viewer" => Self::Viewer,
             "pricer" => Self::Pricer,
             "admin" => Self::Admin,
+            "auditor" => Self::Auditor,
             "service" => Self::Service,
             _ => return None,
         })
@@ -34,9 +37,10 @@ impl Role {
     /// Which granted roles satisfy a `required` level.
     pub fn satisfied_by(required: Self) -> &'static [Self] {
         match required {
-            Self::Viewer => &[Self::Viewer, Self::Pricer, Self::Admin],
+            Self::Viewer => &[Self::Viewer, Self::Pricer, Self::Admin, Self::Auditor],
             Self::Pricer => &[Self::Pricer, Self::Admin],
             Self::Admin => &[Self::Admin],
+            Self::Auditor => &[Self::Auditor, Self::Admin],
             Self::Service => &[Self::Service],
         }
     }

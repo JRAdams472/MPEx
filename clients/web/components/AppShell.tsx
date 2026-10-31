@@ -45,13 +45,13 @@ const NAV = [
   { href: "/publications", label: "Publications", icon: <HistoryIcon /> },
   { href: "/sandbox", label: "Sandbox", icon: <ScienceIcon /> },
   { href: "/grants", label: "Grants", icon: <AdminPanelSettingsIcon />, adminOnly: true },
-  { href: "/audit", label: "Audit", icon: <FactCheckIcon />, adminOnly: true },
+  { href: "/audit", label: "Audit", icon: <FactCheckIcon />, auditAccess: true },
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [publishOpen, setPublishOpen] = useState(false);
-  const { me, canPublish, isAdmin } = useMe();
+  const { me, canPublish, isAdmin, canAudit } = useMe();
 
   return (
     <Box sx={{ display: "flex", minHeight: "100vh" }}>
@@ -118,7 +118,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <Toolbar variant="dense" />
         <Divider />
         <List dense sx={{ px: 1 }}>
-          {NAV.filter((item) => !("adminOnly" in item && item.adminOnly) || isAdmin).map((item) => {
+          {NAV.filter(
+            (item) =>
+              (("adminOnly" in item && item.adminOnly) ? isAdmin : true) &&
+              (("auditAccess" in item && item.auditAccess) ? canAudit : true),
+          ).map((item) => {
             const selected =
               item.href === "/"
                 ? pathname === "/"
