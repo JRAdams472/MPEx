@@ -99,9 +99,23 @@ impl AuditRow {
     }
 }
 
-/// `GET /api/audit/verify` — recompute the whole chain and report the first
-/// break, if any.
-pub async fn verify(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
-    let result = audit::verify_chain(&state.pool).await?;
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyQuery {
+    pub full: Option<bool>,
+}
+
+/// `GET /api/audit/verify` — verify the chain and report the first break,
+/// if any. Resumes from the newest verified watermark by default;
+/// `?full=true` forces a from-genesis walk for post-restore deep sweeps.
+pub async fn verify(
+    State(state): State<AppState>,
+    Query(q): Query<VerifyQuery>,
+) -> Result<Json<Value>, AppError> {
+    let result = if q.full.unwrap_or(false) {
+        audit::verify_chain_full(&state.pool).await?
+    } else {
+        audit::verify_chain(&state.pool).await?
+    };
     Ok(Json(serde_json::to_value(result).unwrap_or_default()))
 }
