@@ -5,6 +5,7 @@ mod evaluate;
 mod expressions;
 mod grants;
 mod matrices;
+mod overrides;
 mod products;
 mod publications;
 mod rate_index;
@@ -106,6 +107,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/rate-sheets", get(rate_sheets::list))
         .route("/api/rate-sheets/{key}", get(rate_sheets::get))
         .route("/api/rate-index", get(rate_index::get))
+        .route("/api/overrides", get(overrides::list))
+        .route("/api/overrides/{key}", get(overrides::get))
         .route("/api/publications", get(publications::list))
         .route("/api/publications/{id}", get(publications::get))
         .route_layer(middleware::from_fn_with_state(
@@ -135,6 +138,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/rate-sheets/{key}/cells",
             patch(rate_sheets::patch_cells),
+        )
+        .route(
+            "/api/overrides/{key}",
+            put(overrides::put).delete(overrides::delete),
         )
         .route_layer(middleware::from_fn_with_state(
             (state.clone(), PRICER),

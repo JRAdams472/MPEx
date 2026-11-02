@@ -25,6 +25,10 @@ mortgage product eligibility and pricing. Rules are metadata-driven and executed
   base rate + per-product adjustment. Imports preview first, then write single-rate-at-par
   drafts and stamp a rate-sheets-only publication; a daily scheduler can run the same import
   (`RATE_INDEX_DAILY_AT`).
+- **Value overrides** patch one scalar leaf inside any artifact — a decision graph node, a
+  matrix or rate-sheet cell, an expression body — via JSON Pointer, without republishing the
+  whole artifact. They resolve through the same draft→publish→promote pipeline and `asOf`
+  history as everything else.
 - **All rules are editable in the web UI**: embedded GoRules JDM editor for decision graphs,
   plus purpose-built matrix and rate-sheet grid editors.
 - **Idempotent evaluation**: `POST /api/evaluate/eligibility` and `POST /api/evaluate/pricing`

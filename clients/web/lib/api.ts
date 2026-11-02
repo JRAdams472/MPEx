@@ -179,6 +179,43 @@ export interface ArtifactDetail {
   history: HistoryEntry[];
 }
 
+/** Override target kinds (MPE-126) — the artifact whose resolved document
+ *  the `valuePath` JSON Pointer patches at snapshot build. */
+export type OverrideTargetKind =
+  | "decision"
+  | "expression"
+  | "matrix"
+  | "rate_sheet";
+
+export interface OverrideListItem extends ArtifactListItem {
+  targetKind: OverrideTargetKind;
+  targetKey: string;
+  valuePath: string;
+}
+
+export interface OverrideRow extends OverrideListItem {
+  id: string;
+  /** Scalar leaf written at `valuePath` (string may carry ZEN text). */
+  value: unknown;
+  env: Env;
+  createdAt: string;
+}
+
+export interface OverrideDetail {
+  key: string;
+  draft: OverrideRow | null;
+  published: OverrideRow | null;
+  history: HistoryEntry[];
+}
+
+export interface OverrideUpsert {
+  targetKind: OverrideTargetKind;
+  targetKey: string;
+  valuePath: string;
+  value: unknown;
+  description?: string;
+}
+
 /** One `audit_events` row as returned by `GET /api/audit` (MPE-121). */
 export interface AuditEvent {
   id: number;
@@ -227,6 +264,8 @@ export const AUDIT_ACTIONS = [
   "rate_index.import",
   "product.rate_config.put",
   "promotion.create",
+  "override.put",
+  "override.delete",
 ] as const;
 
 /** artifact_table values seen in audit detail (promotions audit under
@@ -280,6 +319,8 @@ export interface Publication {
   expressions?: string[];
   matrices?: string[];
   rateSheets?: string[];
+  overrideCount?: number;
+  overrides?: string[];
 }
 
 export interface MatrixAxis {
@@ -441,6 +482,16 @@ export const endpoints = {
     apiPatch<ArtifactRow>(`/api/rate-sheets/${encodeURIComponent(key)}/cells`, {
       cells,
     }),
+  overrides: (asOf?: string, env?: Env) =>
+    apiGet<{ overrides: OverrideListItem[] }>(
+      `/api/overrides${listQuery(asOf, env)}`,
+    ),
+  override: (key: string) =>
+    apiGet<OverrideDetail>(`/api/overrides/${encodeURIComponent(key)}`),
+  saveOverride: (key: string, body: OverrideUpsert) =>
+    apiPut<OverrideRow>(`/api/overrides/${encodeURIComponent(key)}`, body),
+  deleteOverride: (key: string) =>
+    apiDelete(`/api/overrides/${encodeURIComponent(key)}`),
   publications: () => apiGet<{ publications: Publication[] }>("/api/publications"),
   publication: (id: string) =>
     apiGet<Publication>(`/api/publications/${encodeURIComponent(id)}`),
