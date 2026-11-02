@@ -17,6 +17,7 @@ import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import FunctionsIcon from "@mui/icons-material/Functions";
 import GridOnIcon from "@mui/icons-material/GridOn";
 import TableChartIcon from "@mui/icons-material/TableChart";
+import TuneIcon from "@mui/icons-material/Tune";
 import ScienceIcon from "@mui/icons-material/Science";
 import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import FactCheckIcon from "@mui/icons-material/FactCheck";
@@ -42,6 +43,7 @@ const NAV = [
   { href: "/expressions", label: "Expressions", icon: <FunctionsIcon /> },
   { href: "/matrices", label: "Matrices", icon: <GridOnIcon /> },
   { href: "/rate-sheets", label: "Rate sheets", icon: <TableChartIcon /> },
+  { href: "/overrides", label: "Overrides", icon: <TuneIcon /> },
   { href: "/publications", label: "Publications", icon: <HistoryIcon /> },
   { href: "/sandbox", label: "Sandbox", icon: <ScienceIcon /> },
   { href: "/grants", label: "Grants", icon: <AdminPanelSettingsIcon />, adminOnly: true },

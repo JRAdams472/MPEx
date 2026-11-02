@@ -64,6 +64,11 @@ async fn call(
     )
 }
 
+/// Both tests probe a catalog-wide fingerprint — a parallel PUT/publish in
+/// the sibling test bumps `max(updated_at)` and forces a rebuild, so they
+/// serialize on this like AUDIT_LOCK/SEED_LOCK elsewhere.
+static CC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn pool() -> Option<PgPool> {
     let url = std::env::var("DATABASE_URL").ok()?;
     let pool = PgPool::connect(&url).await.unwrap();
@@ -77,6 +82,7 @@ async fn pool() -> Option<PgPool> {
 /// content hash still hits the shared compile cache.
 #[tokio::test]
 async fn publish_recompiles_only_changed_keys() {
+    let _serial = CC_LOCK.lock().await;
     let Some(pool) = pool().await else {
         eprintln!("DATABASE_URL unset — skipping compile-cache test");
         return;
@@ -143,6 +149,7 @@ async fn publish_recompiles_only_changed_keys() {
 /// asOf between them resolves the first version — never a stale hit.
 #[tokio::test]
 async fn asof_resolves_versioned_content() {
+    let _serial = CC_LOCK.lock().await;
     let Some(pool) = pool().await else {
         eprintln!("DATABASE_URL unset — skipping compile-cache test");
         return;

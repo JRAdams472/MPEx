@@ -23,6 +23,7 @@ pub struct Publication {
     pub expressions: Vec<String>,
     pub matrices: Vec<String>,
     pub rate_sheets: Vec<String>,
+    pub overrides: Vec<String>,
 }
 
 /// Drafts become immutable published rows in a single transaction: insert the
@@ -140,10 +141,42 @@ pub async fn publish(
     let rate_sheets = changed_rate_sheet_drafts(&mut tx).await?;
     stamp_rate_sheet_drafts(&mut tx, published_at, id, &rate_sheets).await?;
 
+    // Overrides: every field participates in change detection — the same
+    // key repointed or revalued is a real change worth stamping.
+    let overrides: Vec<String> = sqlx::query_scalar(
+        "WITH latest AS (
+           SELECT DISTINCT ON (key) key, target_kind, target_key, value_path, value, description
+           FROM overrides WHERE status = 'published' AND env = 'dev'
+           ORDER BY key, published_at DESC
+         ), ins AS (
+           INSERT INTO overrides
+             (key, target_kind, target_key, value_path, value, description,
+              status, published_at, publication_id, env)
+           SELECT d.key, d.target_kind, d.target_key, d.value_path, d.value, d.description,
+                  'published', $1, $2, d.env
+           FROM overrides d
+           LEFT JOIN latest p ON p.key = d.key
+           WHERE d.status = 'draft' AND d.env = 'dev'
+             AND (p.key IS NULL
+                  OR p.target_kind IS DISTINCT FROM d.target_kind
+                  OR p.target_key IS DISTINCT FROM d.target_key
+                  OR p.value_path IS DISTINCT FROM d.value_path
+                  OR p.value IS DISTINCT FROM d.value
+                  OR p.description IS DISTINCT FROM d.description)
+           RETURNING key
+         )
+         SELECT key FROM ins ORDER BY key",
+    )
+    .bind(published_at)
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await?;
+
     if decisions.is_empty()
         && expressions.is_empty()
         && matrices.is_empty()
         && rate_sheets.is_empty()
+        && overrides.is_empty()
     {
         // Rolling back drops the publication row too — no empty snapshots.
         return Err(AppError::Conflict("no draft changes to publish".into()));
@@ -164,6 +197,7 @@ pub async fn publish(
                 "expressionCount": expressions.len(),
                 "matrixCount": matrices.len(),
                 "rateSheetCount": rate_sheets.len(),
+                "overrideCount": overrides.len(),
             }),
         },
     )
@@ -182,6 +216,7 @@ pub async fn publish(
         expressions = expressions.len(),
         matrices = matrices.len(),
         rate_sheets = rate_sheets.len(),
+        overrides = overrides.len(),
         "published"
     );
     Ok(Publication {
@@ -194,6 +229,7 @@ pub async fn publish(
         expressions,
         matrices,
         rate_sheets,
+        overrides,
     })
 }
 
@@ -293,6 +329,7 @@ pub async fn publish_rate_sheets(
         expressions: vec![],
         matrices: vec![],
         rate_sheets,
+        overrides: vec![],
     }))
 }
 
@@ -436,10 +473,41 @@ pub async fn promote(
     .fetch_all(&mut *tx)
     .await?;
 
+    let overrides: Vec<String> = sqlx::query_scalar(
+        "WITH src AS (
+           SELECT DISTINCT ON (key) key, target_kind, target_key, value_path, value, description
+           FROM overrides WHERE status = 'published' AND env = $3 ORDER BY key, published_at DESC
+         ), dst AS (
+           SELECT DISTINCT ON (key) key, target_kind, target_key, value_path, value, description
+           FROM overrides WHERE status = 'published' AND env = $4 ORDER BY key, published_at DESC
+         ), ins AS (
+           INSERT INTO overrides
+             (key, target_kind, target_key, value_path, value, description,
+              status, published_at, publication_id, env)
+           SELECT s.key, s.target_kind, s.target_key, s.value_path, s.value, s.description,
+                  'published', $1, $2, $4
+           FROM src s LEFT JOIN dst d ON d.key = s.key
+           WHERE d.key IS NULL
+              OR d.target_kind IS DISTINCT FROM s.target_kind
+              OR d.target_key IS DISTINCT FROM s.target_key
+              OR d.value_path IS DISTINCT FROM s.value_path
+              OR d.value IS DISTINCT FROM s.value
+              OR d.description IS DISTINCT FROM s.description
+           RETURNING key
+         ) SELECT key FROM ins ORDER BY key",
+    )
+    .bind(published_at)
+    .bind(id)
+    .bind(from.as_str())
+    .bind(to.as_str())
+    .fetch_all(&mut *tx)
+    .await?;
+
     if decisions.is_empty()
         && expressions.is_empty()
         && matrices.is_empty()
         && rate_sheets.is_empty()
+        && overrides.is_empty()
     {
         return Err(AppError::Conflict(format!(
             "nothing to promote: {0} and {1} already agree on every artifact",
@@ -463,6 +531,7 @@ pub async fn promote(
                 "expressionCount": expressions.len(),
                 "matrixCount": matrices.len(),
                 "rateSheetCount": rate_sheets.len(),
+                "overrideCount": overrides.len(),
             }),
         },
     )
@@ -473,6 +542,7 @@ pub async fn promote(
         publication = %id, from = from.as_str(), to = to.as_str(),
         decisions = decisions.len(), expressions = expressions.len(),
         matrices = matrices.len(), rate_sheets = rate_sheets.len(),
+        overrides = overrides.len(),
         "promoted"
     );
     Ok(Publication {
@@ -485,5 +555,6 @@ pub async fn promote(
         expressions,
         matrices,
         rate_sheets,
+        overrides,
     })
 }

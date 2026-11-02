@@ -41,6 +41,7 @@ const KIND_LABELS: [keyof Publication, string][] = [
   ["expressions", "Expressions"],
   ["matrices", "Matrices"],
   ["rateSheets", "Rate sheets"],
+  ["overrides", "Overrides"],
 ];
 
 const ENV_COLORS: Record<Env, "default" | "info" | "secondary" | "success"> = {
@@ -69,7 +70,7 @@ export default function PublicationsPage() {
   const [promoteFrom, setPromoteFrom] = useState<Env | null>(null);
 
   const asOfParam = asOf || undefined;
-  const [decisions, expressions, matrices, rateSheets] = useQueries({
+  const [decisions, expressions, matrices, rateSheets, overrides] = useQueries({
     queries: [
       {
         queryKey: ["decisions", asOfParam ?? "draft", snapshotEnv],
@@ -87,6 +88,10 @@ export default function PublicationsPage() {
         queryKey: ["rateSheets", asOfParam ?? "draft", snapshotEnv],
         queryFn: () => endpoints.rateSheets(asOfParam, snapshotEnv),
       },
+      {
+        queryKey: ["overrides", asOfParam ?? "draft", snapshotEnv],
+        queryFn: () => endpoints.overrides(asOfParam, snapshotEnv),
+      },
     ],
   });
 
@@ -95,6 +100,7 @@ export default function PublicationsPage() {
     ["Expressions", expressions.data?.expressions],
     ["Matrices", matrices.data?.matrices],
     ["Rate sheets", rateSheets.data?.rateSheets],
+    ["Overrides", overrides.data?.overrides],
   ];
 
   return (
@@ -377,6 +383,7 @@ function PromoteDialog({
     ["expressions", "expressions"],
     ["matrices", "matrices"],
     ["rateSheets", "rate sheets"],
+    ["overrides", "overrides"],
   ];
 
   return (

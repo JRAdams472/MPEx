@@ -1,14 +1,14 @@
 # Rules versioning & publications
 
-MPEx stores rule artifacts (decisions, expressions, matrices, rate sheets) as
-**append-only rows keyed `(key, status, published_at)`**. Nothing published is
-ever updated — history accumulates and `asOf` resolves a point-in-time view
-over it.
+MPEx stores rule artifacts (decisions, expressions, matrices, rate sheets,
+overrides) as **append-only rows keyed `(key, status, published_at)`**.
+Nothing published is ever updated — history accumulates and `asOf` resolves a
+point-in-time view over it.
 
 ## Lifecycle
 
 ```
- PUT /api/{decisions,expressions,matrices,rate-sheets}/{key}
+ PUT /api/{decisions,expressions,matrices,rate-sheets,overrides}/{key}
                                            →  mutable draft (one per key, dev lane)
  POST /api/publications                   →  atomic publish of every *changed* draft
  POST /api/admin/promotions               →  copy changed artifacts one lane forward
@@ -76,6 +76,10 @@ scoped to one lane.
 | `GET /api/rate-sheets/{key}` | `{draft, published, history[]}` (`key` = product code) |
 | `PUT /api/rate-sheets/{key}` | Upsert draft (`{spec}`; spec validated) |
 | `DELETE /api/rate-sheets/{key}` | Delete draft only |
+| `GET /api/overrides[?asOf=&env=]` | Draft list, or published snapshot at `asOf` |
+| `GET /api/overrides/{key}` | `{draft, published, history[]}` |
+| `PUT /api/overrides/{key}` | Upsert draft (`{targetKind, targetKey, valuePath, value, description?}`; target + pointer + patched validity checked) |
+| `DELETE /api/overrides/{key}` | Delete draft only |
 | `POST /api/evaluate/eligibility` | `{loan, env?, asOf?, trace?}` → per-product `eligible`/`reasons` buckets |
 | `POST /api/evaluate/pricing` | `{loan, products[], rate?, lockTermDays?, asOf?, env?, trace?}` → per-rate lines + LLPA waterfall |
 | `GET /api/publications` | Publications with artifact counts + `env` |
@@ -166,6 +170,51 @@ snapshots and pricing memos like any other artifact.
 Matrix axis expressions can't call `decisionNode` — they're plain ZEN
 compiled at save time — so matrices don't reference named expressions
 directly; wrap the matrix in a decision graph that evaluates them.
+
+## Overrides
+
+`overrides` (MPE-126) are append-only artifact rows for surgical value
+changes — patch one scalar inside a target artifact without republishing the
+whole graph or spec. A row carries:
+
+```jsonc
+{
+  "targetKind": "decision",      // decision | expression | matrix | rate_sheet
+  "targetKey": "eligibility.FIXED30",
+  "valuePath": "/nodes/2/content/expressions/0/value",  // RFC 6901 JSON Pointer
+  "value": "false",              // scalar leaf (string may carry ZEN text)
+  "description": "kill switch"
+}
+```
+
+The pointer addresses the document the snapshot pipeline consumes:
+
+| `targetKind` | Patchable document |
+|---|---|
+| `decision` | the JDM graph (`decisions.jdm`) |
+| `matrix` | the authoring spec (`matrices.spec`) — loader JDM re-derives after patching |
+| `rate_sheet` | the sheet spec (`rate_sheets.spec`) |
+| `expression` | `{"expression": <text>}` — the stored source text |
+
+Overrides resolve through the same revision/lane pipeline as their targets:
+drafts apply to the dev working set, published rows to published/asOf
+snapshots, `LatestPublished` fills unpublished keys from dev drafts.
+Application is deterministic — overrides sort by key and apply in order
+(last wins on pointer collisions), after base resolution and before the
+compile pass, so the `(key, content_hash)` compile cache recompiles only the
+patched key.
+
+`PUT` validates against the current working set (draft else latest
+dev-published): the target must resolve, `valuePath` must be a JSON Pointer
+addressing an existing scalar leaf — structural nodes can't be replaced —
+and the *patched* document must still be a valid artifact of its kind (JDM
+parses, matrix spec compiles, rate-sheet spec validates, expression
+compiles). At build time a row whose target or pointer stopped resolving is
+skipped with a warn rather than failing the snapshot.
+
+Deleting a draft stops it applying to draft resolution; a published override
+stays immutable in history like every artifact — supersede it with a new
+draft + publish. Mutations audit as `override.put` / `override.delete`.
 
 ## Evaluation revisions
 

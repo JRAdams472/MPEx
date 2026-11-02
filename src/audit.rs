@@ -38,6 +38,8 @@ pub mod action {
     pub const RATE_INDEX_IMPORT: &str = "rate_index.import";
     pub const PRODUCT_RATE_CONFIG_PUT: &str = "product.rate_config.put";
     pub const PROMOTION_CREATE: &str = "promotion.create";
+    pub const OVERRIDE_PUT: &str = "override.put";
+    pub const OVERRIDE_DELETE: &str = "override.delete";
 }
 
 /// Attribution for an event, derived from the request's `Principal`.

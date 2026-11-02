@@ -8,6 +8,7 @@ use zen_engine::model::DecisionContent;
 
 use crate::rules::compile_cache::CompileCache;
 use crate::rules::loader::{Env, Revision};
+use crate::rules::overrides;
 
 /// Matrix identity needed by pricing: which matrices apply to a product.
 #[derive(Debug, Clone)]
@@ -161,6 +162,8 @@ impl SnapshotStore {
                SELECT 'matrices', updated_at FROM matrices WHERE status = $1 AND env = $2
                UNION ALL
                SELECT 'rate_sheets', updated_at FROM rate_sheets WHERE status = $1 AND env = $2
+               UNION ALL
+               SELECT 'overrides', updated_at FROM overrides WHERE status = $1 AND env = $2
              ) s GROUP BY t ORDER BY t",
         )
         .bind(status)
@@ -182,7 +185,8 @@ impl SnapshotStore {
             decisions = tracing::field::Empty,
             expressions = tracing::field::Empty,
             rate_sheets = tracing::field::Empty,
-            matrices = tracing::field::Empty
+            matrices = tracing::field::Empty,
+            overrides = tracing::field::Empty
         )
     )]
     async fn build(
@@ -196,16 +200,90 @@ impl SnapshotStore {
         // collision (keys are namespaced, e.g. eligibility.X / llpa.X).
         // `$1 = 'dev'` in every draft branch makes draft-fill a no-op outside
         // the dev lane — drafts can never resolve in qa/uat/prod.
-        let rows: Vec<(String, serde_json::Value)> = match revision {
-            Revision::Draft => {
-                sqlx::query_as(
-                    "SELECT DISTINCT ON (key) key, jdm FROM (
-                       (SELECT DISTINCT ON (key) key, jdm, 0 AS prio FROM decisions
+        // `spec` (matrices only) and `kind` ride along so value overrides
+        // (MPE-126) can patch the authoring doc and re-derive loader JDM.
+        let rows: Vec<(String, serde_json::Value, Option<serde_json::Value>, String)> =
+            match revision {
+                Revision::Draft => {
+                    sqlx::query_as(
+                        "SELECT DISTINCT ON (key) key, jdm, spec, kind FROM (
+                       (SELECT DISTINCT ON (key) key, jdm, CAST(NULL AS jsonb) AS spec,
+                               'decision' AS kind, 0 AS prio FROM decisions
                         WHERE status = 'draft' AND env = $1 ORDER BY key, updated_at DESC)
                        UNION ALL
-                       (SELECT DISTINCT ON (key) key, jdm, 1 AS prio FROM matrices
+                       (SELECT DISTINCT ON (key) key, jdm, spec, 'matrix' AS kind, 1 AS prio
+                        FROM matrices
                         WHERE status = 'draft' AND env = $1 ORDER BY key, updated_at DESC)
                      ) t ORDER BY key, prio",
+                    )
+                    .bind(env.as_str())
+                    .fetch_all(&self.pool)
+                    .await?
+                }
+                Revision::AsOf(ts) => {
+                    sqlx::query_as(
+                        "SELECT DISTINCT ON (key) key, jdm, spec, kind FROM (
+                       (SELECT DISTINCT ON (key) key, jdm, CAST(NULL AS jsonb) AS spec,
+                               'decision' AS kind, 0 AS prio FROM decisions
+                        WHERE status = 'published' AND env = $2 AND published_at <= $1
+                        ORDER BY key, published_at DESC)
+                       UNION ALL
+                       (SELECT DISTINCT ON (key) key, jdm, spec, 'matrix' AS kind, 1 AS prio
+                        FROM matrices
+                        WHERE status = 'published' AND env = $2 AND published_at <= $1
+                        ORDER BY key, published_at DESC)
+                     ) t ORDER BY key, prio",
+                    )
+                    .bind(ts)
+                    .bind(env.as_str())
+                    .fetch_all(&self.pool)
+                    .await?
+                }
+                Revision::LatestPublished => {
+                    // Latest published per key in this lane; dev drafts fill keys
+                    // with no published row — gated to `$1 = 'dev'` so drafts
+                    // never leak into qa/uat/prod.
+                    sqlx::query_as(
+                        "WITH pub AS (
+                       SELECT DISTINCT ON (key) key, jdm, spec, kind, 0 AS prio FROM (
+                         SELECT key, jdm, CAST(NULL AS jsonb) AS spec, 'decision' AS kind,
+                                published_at FROM decisions
+                         WHERE status = 'published' AND env = $1
+                         UNION ALL
+                         SELECT key, jdm, spec, 'matrix' AS kind, published_at FROM matrices
+                         WHERE status = 'published' AND env = $1
+                       ) a ORDER BY key, published_at DESC
+                     ), drf AS (
+                       SELECT DISTINCT ON (key) key, jdm, spec, kind, 1 AS prio FROM (
+                         SELECT key, jdm, CAST(NULL AS jsonb) AS spec, 'decision' AS kind,
+                                updated_at FROM decisions
+                         WHERE status = 'draft' AND env = $1 AND $1 = 'dev'
+                         UNION ALL
+                         SELECT key, jdm, spec, 'matrix' AS kind, updated_at FROM matrices
+                         WHERE status = 'draft' AND env = $1 AND $1 = 'dev'
+                       ) a ORDER BY key, updated_at DESC
+                     )
+                     SELECT DISTINCT ON (key) key, jdm, spec, kind FROM (
+                       SELECT * FROM pub UNION ALL SELECT * FROM drf
+                     ) t ORDER BY key, prio",
+                    )
+                    .bind(env.as_str())
+                    .fetch_all(&self.pool)
+                    .await?
+                }
+            };
+
+        // Overrides resolve with identical revision semantics, then patch
+        // each kind's patchable document below — before the MPE-127 compile
+        // pass, so the content hash covers the patched bytes and an override
+        // recompiles only its target.
+        let override_rows: Vec<(String, String, String, String, serde_json::Value)> = match revision
+        {
+            Revision::Draft => {
+                sqlx::query_as(
+                    "SELECT DISTINCT ON (key) key, target_kind, target_key, value_path, value
+                         FROM overrides
+                         WHERE status = 'draft' AND env = $1 ORDER BY key, updated_at DESC",
                 )
                 .bind(env.as_str())
                 .fetch_all(&self.pool)
@@ -213,15 +291,10 @@ impl SnapshotStore {
             }
             Revision::AsOf(ts) => {
                 sqlx::query_as(
-                    "SELECT DISTINCT ON (key) key, jdm FROM (
-                       (SELECT DISTINCT ON (key) key, jdm, 0 AS prio FROM decisions
-                        WHERE status = 'published' AND env = $2 AND published_at <= $1
-                        ORDER BY key, published_at DESC)
-                       UNION ALL
-                       (SELECT DISTINCT ON (key) key, jdm, 1 AS prio FROM matrices
-                        WHERE status = 'published' AND env = $2 AND published_at <= $1
-                        ORDER BY key, published_at DESC)
-                     ) t ORDER BY key, prio",
+                    "SELECT DISTINCT ON (key) key, target_kind, target_key, value_path, value
+                         FROM overrides
+                         WHERE status = 'published' AND env = $2 AND published_at <= $1
+                         ORDER BY key, published_at DESC",
                 )
                 .bind(ts)
                 .bind(env.as_str())
@@ -229,46 +302,92 @@ impl SnapshotStore {
                 .await?
             }
             Revision::LatestPublished => {
-                // Latest published per key in this lane; dev drafts fill keys
-                // with no published row — gated to `$1 = 'dev'` so drafts
-                // never leak into qa/uat/prod.
                 sqlx::query_as(
                     "WITH pub AS (
-                       SELECT DISTINCT ON (key) key, jdm, 0 AS prio FROM (
-                         SELECT key, jdm, published_at FROM decisions
-                         WHERE status = 'published' AND env = $1
-                         UNION ALL
-                         SELECT key, jdm, published_at FROM matrices
-                         WHERE status = 'published' AND env = $1
-                       ) a ORDER BY key, published_at DESC
+                       SELECT DISTINCT ON (key) key, target_kind, target_key, value_path, value,
+                              0 AS prio
+                       FROM overrides WHERE status = 'published' AND env = $1
+                       ORDER BY key, published_at DESC
                      ), drf AS (
-                       SELECT DISTINCT ON (key) key, jdm, 1 AS prio FROM (
-                         SELECT key, jdm, updated_at FROM decisions
-                         WHERE status = 'draft' AND env = $1 AND $1 = 'dev'
-                         UNION ALL
-                         SELECT key, jdm, updated_at FROM matrices
-                         WHERE status = 'draft' AND env = $1 AND $1 = 'dev'
-                       ) a ORDER BY key, updated_at DESC
+                       SELECT DISTINCT ON (key) key, target_kind, target_key, value_path, value,
+                              1 AS prio
+                       FROM overrides WHERE status = 'draft' AND env = $1 AND $1 = 'dev'
+                       ORDER BY key, updated_at DESC
                      )
-                     SELECT DISTINCT ON (key) key, jdm FROM (
-                       SELECT * FROM pub UNION ALL SELECT * FROM drf
-                     ) t ORDER BY key, prio",
+                     SELECT DISTINCT ON (key) key, target_kind, target_key, value_path, value
+                     FROM (SELECT * FROM pub UNION ALL SELECT * FROM drf) t
+                     ORDER BY key, prio",
                 )
                 .bind(env.as_str())
                 .fetch_all(&self.pool)
                 .await?
             }
         };
+        // Deterministic application: sort by override key so two rows hitting
+        // the same pointer resolve last-wins instead of plan-order-dependent.
+        let mut override_rows: Vec<overrides::OverrideRow> = override_rows
+            .into_iter()
+            .map(
+                |(key, target_kind, target_key, value_path, value)| overrides::OverrideRow {
+                    key,
+                    target_kind,
+                    target_key,
+                    value_path,
+                    value,
+                },
+            )
+            .collect();
+        override_rows.sort_by(|a, b| a.key.cmp(&b.key));
+        let mut by_target: HashMap<(&str, &str), Vec<&overrides::OverrideRow>> = HashMap::new();
+        for o in &override_rows {
+            by_target
+                .entry((o.target_kind.as_str(), o.target_key.as_str()))
+                .or_default()
+                .push(o);
+        }
+        let mut applied_overrides = 0usize;
 
         let mem = std::sync::Arc::new(MemoryLoader::default());
-        for (key, jdm) in &rows {
+        // Keys+JDM that entered the loader — phase 2 swaps each for its
+        // shared compiled form (MPE-127).
+        let mut loader_entries: Vec<(String, serde_json::Value)> = Vec::with_capacity(rows.len());
+        for (key, jdm, spec, kind) in rows {
+            let mut jdm = jdm;
+            if let Some(list) = by_target.get(&(kind.as_str(), key.as_str())) {
+                for ovr in list {
+                    let patched = if kind == "matrix" {
+                        // Matrices patch the authoring spec, then re-derive
+                        // loader JDM — pointers address the doc pricers wrote.
+                        match spec.clone() {
+                            Some(mut doc) => {
+                                overrides::apply(&mut doc, &ovr.value_path, &ovr.value)
+                                    .and_then(|()| crate::rules::matrix::MatrixSpec::parse(&doc))
+                                    .and_then(|m| m.to_jdm())
+                            }
+                            None => Err("matrix row carried no spec".to_string()),
+                        }
+                    } else {
+                        overrides::apply(&mut jdm, &ovr.value_path, &ovr.value)
+                            .map(|()| jdm.clone())
+                    };
+                    match patched {
+                        Ok(p) => {
+                            jdm = p;
+                            applied_overrides += 1;
+                        }
+                        Err(e) => tracing::warn!(
+                            override_key = %ovr.key,
+                            target = %format!("{kind}:{key}"),
+                            "override skipped at snapshot build: {e}"
+                        ),
+                    }
+                }
+            }
             let content: DecisionContent = serde_json::from_value(jdm.clone())
                 .with_context(|| format!("decision {key}: invalid JDM"))?;
             mem.add(key.clone(), content);
+            loader_entries.push((key, jdm));
         }
-        // Keys+JDM that entered the loader — phase 2 swaps each for its
-        // shared compiled form (MPE-127).
-        let mut loader_entries: Vec<(String, serde_json::Value)> = rows.clone();
 
         // Rate sheet specs and matrix scoping metadata resolve with identical
         // revision semantics — data artifacts live beside the loader, not in it.
@@ -312,7 +431,25 @@ impl SnapshotStore {
                 .await?
             }
         };
-        let rate_sheets: HashMap<String, serde_json::Value> = sheet_rows.into_iter().collect();
+        let rate_sheets: HashMap<String, serde_json::Value> = sheet_rows
+            .into_iter()
+            .map(|(key, spec)| {
+                let mut spec = spec;
+                if let Some(list) = by_target.get(&("rate_sheet", key.as_str())) {
+                    for ovr in list {
+                        match overrides::apply(&mut spec, &ovr.value_path, &ovr.value) {
+                            Ok(()) => applied_overrides += 1,
+                            Err(e) => tracing::warn!(
+                                override_key = %ovr.key,
+                                target = %format!("rate_sheet:{key}"),
+                                "override skipped at snapshot build: {e}"
+                            ),
+                        }
+                    }
+                }
+                (key, spec)
+            })
+            .collect();
 
         let matrix_rows: Vec<(String, String, Option<String>)> = match revision {
             Revision::Draft => {
@@ -420,7 +557,28 @@ impl SnapshotStore {
                 );
                 continue;
             }
-            let wrapper = expression_jdm(key, kind, expression);
+            // Expression overrides patch {"expression": <text>} then re-wrap.
+            let mut expr_doc = overrides::expression_doc(expression);
+            if let Some(list) = by_target.get(&("expression", key.as_str())) {
+                for ovr in list {
+                    match overrides::apply(&mut expr_doc, &ovr.value_path, &ovr.value) {
+                        Ok(()) => applied_overrides += 1,
+                        Err(e) => tracing::warn!(
+                            override_key = %ovr.key,
+                            target = %format!("expression:{key}"),
+                            "override skipped at snapshot build: {e}"
+                        ),
+                    }
+                }
+            }
+            let source = match overrides::expression_from_doc(&expr_doc) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(key, "expression override produced invalid doc: {e}");
+                    expression
+                }
+            };
+            let wrapper = expression_jdm(key, kind, source);
             let content: DecisionContent = serde_json::from_value(wrapper.clone())
                 .with_context(|| format!("expression {key}: wrapper JDM invalid"))?;
             mem.add(key.clone(), content);
@@ -433,6 +591,7 @@ impl SnapshotStore {
         // keys whose bytes changed recompile. Runs after every raw add so
         // schema resolution sees the same full-catalog view zen's
         // `prepared()` would.
+        let decision_count = loader_entries.len() - expressions;
         let dyn_loader: DynamicLoader = mem.clone();
         for (key, jdm) in loader_entries {
             let prepared = self
@@ -449,14 +608,16 @@ impl SnapshotStore {
             matrices,
         };
         tracing::Span::current()
-            .record("decisions", rows.len())
+            .record("decisions", decision_count)
             .record("expressions", expressions)
             .record("rate_sheets", snapshot.rate_sheets.len())
-            .record("matrices", snapshot.matrices.len());
+            .record("matrices", snapshot.matrices.len())
+            .record("overrides", applied_overrides);
         tracing::debug!(
             ?revision,
-            decisions = rows.len(),
+            decisions = decision_count,
             expressions,
+            overrides = applied_overrides,
             "built decision snapshot"
         );
         Ok(Arc::new(snapshot))
