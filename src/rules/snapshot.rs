@@ -6,6 +6,7 @@ use sqlx::PgPool;
 use zen_engine::loader::{CachedLoader, DecisionLoader, DynamicLoader, MemoryLoader};
 use zen_engine::model::DecisionContent;
 
+use crate::rules::compile_cache::CompileCache;
 use crate::rules::loader::{Env, Revision};
 
 /// Matrix identity needed by pricing: which matrices apply to a product.
@@ -38,6 +39,9 @@ pub struct SnapshotStore {
     /// Memoized pricing responses keyed (fingerprint, loan, products, rate,
     /// lockTerm) — safe because evaluation is a pure function of those.
     memo: RwLock<HashMap<String, Arc<serde_json::Value>>>,
+    /// Compiled graphs shared across snapshots by (key, content hash) —
+    /// a publish recompiles only what changed (MPE-127).
+    compiles: CompileCache,
 }
 
 /// Memoized pricing responses live as long as their snapshot fingerprint
@@ -50,7 +54,14 @@ impl SnapshotStore {
             pool,
             cache: RwLock::new(HashMap::new()),
             memo: RwLock::new(HashMap::new()),
+            compiles: CompileCache::default(),
         }
+    }
+
+    /// Compiled-graph cache misses since boot — a publish bumps this by the
+    /// number of *changed* keys, not the catalog (MPE-127 instrumentation).
+    pub fn compile_misses(&self) -> u64 {
+        self.compiles.misses()
     }
 
     /// Resolve + (possibly) cache the loader for a revision within an
@@ -249,12 +260,15 @@ impl SnapshotStore {
             }
         };
 
-        let mem = MemoryLoader::default();
+        let mem = std::sync::Arc::new(MemoryLoader::default());
         for (key, jdm) in &rows {
             let content: DecisionContent = serde_json::from_value(jdm.clone())
                 .with_context(|| format!("decision {key}: invalid JDM"))?;
             mem.add(key.clone(), content);
         }
+        // Keys+JDM that entered the loader — phase 2 swaps each for its
+        // shared compiled form (MPE-127).
+        let mut loader_entries: Vec<(String, serde_json::Value)> = rows.clone();
 
         // Rate sheet specs and matrix scoping metadata resolve with identical
         // revision semantics — data artifacts live beside the loader, not in it.
@@ -406,16 +420,31 @@ impl SnapshotStore {
                 );
                 continue;
             }
-            let content: DecisionContent =
-                serde_json::from_value(expression_jdm(key, kind, expression))
-                    .with_context(|| format!("expression {key}: wrapper JDM invalid"))?;
+            let wrapper = expression_jdm(key, kind, expression);
+            let content: DecisionContent = serde_json::from_value(wrapper.clone())
+                .with_context(|| format!("expression {key}: wrapper JDM invalid"))?;
             mem.add(key.clone(), content);
+            loader_entries.push((key.clone(), wrapper));
             expressions += 1;
+        }
+
+        // Phase 2 (MPE-127): replace each raw entry with the shared compiled
+        // form. Unchanged content hashes hit the cross-snapshot cache; only
+        // keys whose bytes changed recompile. Runs after every raw add so
+        // schema resolution sees the same full-catalog view zen's
+        // `prepared()` would.
+        let dyn_loader: DynamicLoader = mem.clone();
+        for (key, jdm) in loader_entries {
+            let prepared = self
+                .compiles
+                .get_or_prepare(&key, &jdm, &dyn_loader)
+                .await?;
+            mem.add(key, (*prepared).clone());
         }
 
         let snapshot = Snapshot {
             fingerprint,
-            loader: Arc::new(CachedLoader::from(Arc::new(mem) as DynamicLoader)),
+            loader: Arc::new(CachedLoader::from(mem as DynamicLoader)),
             rate_sheets,
             matrices,
         };
