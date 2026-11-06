@@ -31,6 +31,9 @@ test("products list renders the seeded catalog", async ({ page }) => {
 test("decisions list → detail loads the JDM editor", async ({ page }) => {
   await page.goto("/decisions");
   await page.getByRole("link", { name: /eligibility\.CONV30/ }).click();
+  // Single-table decisions default to the Simple editor; the full JDM graph
+  // lives behind Advanced.
+  await page.getByRole("button", { name: "Advanced" }).click();
   // jdm-editor renders a React Flow canvas.
   await expect(page.locator(".react-flow").first()).toBeVisible({
     timeout: 30_000,

@@ -136,6 +136,8 @@ jobs:
           RUN_SEED=1 \
           OIDC_ISSUER=http://localhost:5556/dex \
           OIDC_AUDIENCE=mpex-api,mpex-web,mpex-svc,mpex-ci \
+          RATE_LIMIT_PER_MIN=600 \
+          RATE_LIMIT_MUTATIONS_PER_MIN=300 \
           ./target/debug/mpex &
           for i in $(seq 1 60); do
             curl -sf http://localhost:8080/healthz && exit 0 || sleep 1

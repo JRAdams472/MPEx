@@ -26,6 +26,24 @@ const JDM = {
   ],
 };
 
+async function api(
+  ctx: import("@playwright/test").BrowserContext,
+  method: "get" | "put" | "delete",
+  path: string,
+  body?: unknown,
+) {
+  // Every e2e request shares one per-IP quota on the API's edge limits; a
+  // 429 under parallel workers is contention, not a failure — retry twice
+  // with a short backoff before surfacing the status.
+  for (let attempt = 0; ; attempt++) {
+    const res = await ctx.request[method](`http://localhost:3000${path}`, {
+      data: body,
+    });
+    if (res.status() !== 429 || attempt === 2) return res;
+    await new Promise((r) => setTimeout(r, 2500));
+  }
+}
+
 test("simple mode: table view, advanced toggle, save preserves graph", async ({
   page,
   browser,
@@ -34,12 +52,13 @@ test("simple mode: table view, advanced toggle, save preserves graph", async ({
     storageState: "e2e/.auth/admin.json",
   });
   try {
-    // Fresh draft with a single-table graph.
-    await admin.request.delete(`http://localhost:3000/bff/api/decisions/${KEY}`);
-    const seed = await admin.request.put(
-      `http://localhost:3000/bff/api/decisions/${KEY}`,
-      { data: { kind: "shared", productCode: null, jdm: JDM } },
-    );
+    // Fresh draft with a single-table graph (PUT fully replaces any stale
+    // draft from a previous run).
+    const seed = await api(admin, "put", `/bff/api/decisions/${KEY}`, {
+      kind: "shared",
+      productCode: null,
+      jdm: JDM,
+    });
     expect(seed.status()).toBe(200);
 
     await page.goto(`/decisions/${encodeURIComponent(KEY)}`);
@@ -78,9 +97,7 @@ test("simple mode: table view, advanced toggle, save preserves graph", async ({
 
     // The persisted draft gained exactly one rule; nodes/edges otherwise
     // identical to the seed.
-    const got = await admin.request.get(
-      `http://localhost:3000/bff/api/decisions/${encodeURIComponent(KEY)}`,
-    );
+    const got = await api(admin, "get", `/bff/api/decisions/${encodeURIComponent(KEY)}`);
     const body = (await got.json()) as {
       draft: { jdm: { nodes: { id: string; type: string; content?: typeof TABLE }[]; edges: unknown[] } };
     };
@@ -89,7 +106,7 @@ test("simple mode: table view, advanced toggle, save preserves graph", async ({
     expect(body.draft.jdm.nodes.map((n) => n.id)).toEqual(["in", "tbl", "out"]);
     expect(body.draft.jdm.edges).toEqual(JDM.edges);
   } finally {
-    await admin.request.delete(`http://localhost:3000/bff/api/decisions/${KEY}`);
+    await api(admin, "delete", `/bff/api/decisions/${KEY}`);
     await admin.close();
   }
 });
