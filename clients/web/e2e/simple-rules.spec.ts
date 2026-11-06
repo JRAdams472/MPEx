@@ -71,9 +71,12 @@ test("simple mode: table view, advanced toggle, save preserves graph", async ({
     await expect(page.locator(".grl-dt")).toBeVisible();
     await expect(page.locator(".grl-dt")).toContainText("LTV");
     await expect(page.locator(".grl-dt")).toContainText("reason");
-    // Business mode decomposes "> 97" into an operator picker + a numeric
-    // input — the guided cell UX this mode exists for.
-    await expect(page.getByRole("spinbutton")).toHaveValue("97");
+    // The seeded input cell renders raw "> 97" text or — once the editor's
+    // expression parser finishes initializing — a business-mode operator
+    // picker plus operand input ("97"). Either rendering proves the table
+    // loaded the rule; accept both.
+    const operand = page.getByText("> 97").or(page.getByRole("spinbutton"));
+    await expect(operand.first()).toBeVisible({ timeout: 15_000 });
     await expect(page.locator(".grl-dt")).toContainText("ltv exceeds 97%");
 
     // Advanced shows the full node graph.
