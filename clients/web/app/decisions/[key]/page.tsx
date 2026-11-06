@@ -8,7 +8,9 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import TextField from "@mui/material/TextField";
 import Divider from "@mui/material/Divider";
-import type { DecisionGraphType } from "@gorules/jdm-editor";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
+import type { DecisionGraphType, DecisionTableType } from "@gorules/jdm-editor";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -20,7 +22,9 @@ import {
   type EligibilityReport,
 } from "@/lib/api";
 import DecisionEditor from "@/components/DecisionEditor";
+import DecisionTableEditor from "@/components/DecisionTableEditor";
 import StatusChip from "@/components/StatusChip";
+import { findSimpleTable, patchTableContent, stableStringify } from "@/lib/jdm";
 import { useMe } from "@/lib/me";
 
 const SAMPLE_LOAN = `{
@@ -48,6 +52,22 @@ export default function DecisionDetailPage() {
   const graph =
     edited ?? (doc ? ({ nodes: doc.nodes, edges: doc.edges } as DecisionGraphType) : null);
   const dirty = edited !== null;
+
+  // "Simple" editing = standalone decision-table view when the graph holds
+  // exactly one decisionTableNode; `null` view = not chosen yet (defaults to
+  // simple when eligible, advanced otherwise).
+  const simple = findSimpleTable(graph);
+  const [view, setView] = useState<"simple" | "advanced" | null>(null);
+  const effectiveView = view ?? (simple.ok ? "simple" : "advanced");
+
+  const onTableChange = (table: DecisionTableType) => {
+    if (!graph || !simple.ok) return;
+    // The editor emits on mount with the normalized table — only treat an
+    // actual content change as a user edit.
+    const current = (graph.nodes ?? []).find((n) => n.id === simple.nodeId)?.content;
+    if (stableStringify(table) === stableStringify(current)) return;
+    setEdited(patchTableContent(graph, simple.nodeId, table));
+  };
 
   const save = useMutation({
     mutationFn: () =>
@@ -135,11 +155,39 @@ export default function DecisionDetailPage() {
       )}
 
       {graph ? (
-        <DecisionEditor
-          value={graph}
-          onChange={setEdited}
-          disabled={!data.draft && !data.published}
-        />
+        <>
+          <ToggleButtonGroup
+            size="small"
+            exclusive
+            value={effectiveView}
+            onChange={(_, v) => v && setView(v)}
+            sx={{ mb: 1.5 }}
+          >
+            <ToggleButton value="simple">Simple</ToggleButton>
+            <ToggleButton value="advanced">Advanced</ToggleButton>
+          </ToggleButtonGroup>
+          {effectiveView === "simple" ? (
+            simple.ok ? (
+              <DecisionTableEditor
+                value={simple.table}
+                onChange={onTableChange}
+                disabled={!data.draft && !data.published}
+              />
+            ) : (
+              <Alert severity="info">
+                {simple.reason === "none"
+                  ? "This decision has no rules table — add a decision table node in Advanced mode."
+                  : "This decision contains multiple rules tables — use Advanced mode to edit them."}
+              </Alert>
+            )
+          ) : (
+            <DecisionEditor
+              value={graph}
+              onChange={setEdited}
+              disabled={!data.draft && !data.published}
+            />
+          )}
+        </>
       ) : (
         <Alert severity="info">No draft or published content for this key.</Alert>
       )}
