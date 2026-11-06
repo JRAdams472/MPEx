@@ -14,10 +14,16 @@ async function api(
   path: string,
   body?: unknown,
 ) {
-  const res = await ctx.request[method](`http://localhost:3000${path}`, {
-    data: body,
-  });
-  return res;
+  // Every e2e request shares one per-IP quota on the API's edge limits; a
+  // 429 under parallel workers is contention, not a failure — retry twice
+  // with a short backoff before surfacing the status.
+  for (let attempt = 0; ; attempt++) {
+    const res = await ctx.request[method](`http://localhost:3000${path}`, {
+      data: body,
+    });
+    if (res.status() !== 429 || attempt === 2) return res;
+    await new Promise((r) => setTimeout(r, 2500));
+  }
 }
 
 test("overrides: create draft, see it in list + detail, delete restores", async ({

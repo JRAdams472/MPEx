@@ -29,8 +29,9 @@ mortgage product eligibility and pricing. Rules are metadata-driven and executed
   matrix or rate-sheet cell, an expression body — via JSON Pointer, without republishing the
   whole artifact. They resolve through the same draft→publish→promote pipeline and `asOf`
   history as everything else.
-- **All rules are editable in the web UI**: embedded GoRules JDM editor for decision graphs,
-  plus purpose-built matrix and rate-sheet grid editors.
+- **All rules are editable in the web UI**: embedded GoRules JDM editor for decision graphs
+  with a Simple (business) table mode for single-table decisions, plus purpose-built matrix
+  and rate-sheet grid editors.
 - **Idempotent evaluation**: `POST /api/evaluate/eligibility` and `POST /api/evaluate/pricing`
   take the full loan model in the request body and need no external data beyond the resolved
   publication snapshot.
