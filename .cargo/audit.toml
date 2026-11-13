@@ -28,4 +28,12 @@ ignore = [
     # loaders, which MPEx never instantiates; jsonwebtoken performs signature
     # verification only — no decryption oracle exists. No fix released.
     "RUSTSEC-2023-0071",
+    # libsqlite3-sys via sqlx-sqlite — bundled SQLite can leak uninitialized
+    # page-cache memory when a process opens a crafted DB+-wal pair. MPEx
+    # configures sqlx postgres-only (no `sqlite` feature): libsqlite3-sys is
+    # absent from the compiled graph (`cargo tree -i` prints nothing) and no
+    # sqlite connection is ever opened; the CVE's local file-open vector is
+    # unreachable. Patch needs libsqlite3-sys >=0.39 but sqlx-sqlite 0.8.6
+    # pins 0.30.1 — revisit when upstream sqlx ships (MPE-213).
+    "RUSTSEC-2026-0459",
 ]
