@@ -26,7 +26,7 @@ opentelemetry_sdk = { version = "0.33", features = [
 ] }
 # aws_lc_rs backend: already in the tree via reqwest/rustls — keeps the JWT
 # crypto provider unambiguous and adds no new native deps.
-jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
+jsonwebtoken = { version = "12", features = ["aws_lc_rs"] }
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "rustls-tls",
