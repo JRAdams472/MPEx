@@ -250,7 +250,7 @@ mod tests {
             Algorithm::RS256 => {
                 EncodingKey::from_rsa_pem(testkit::PRIVATE_KEY_PEM.as_bytes()).unwrap()
             }
-            Algorithm::HS256 => EncodingKey::from_secret(secret.as_bytes()),
+            Algorithm::HS256 => EncodingKey::from_secret(secret.as_bytes()).unwrap(),
             _ => unimplemented!(),
         };
         encode(&header, &claims, &key).unwrap()
