@@ -59,9 +59,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.104"
+version = "1.0.105"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
+checksum = "2cb931c189b85683d69a5cfad41d4d418671e1ac413dd209f3f2fc31e3cfd902"
 
 [[package]]
 name = "ar_archive_writer"
@@ -3040,9 +3040,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.13.1"
+version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
+checksum = "9807af0e638c12e753aa1b4e601791bf2a8f71274023c8bbeec12fc149950857"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -3052,9 +3052,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.18"
+version = "0.4.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad8553b9b26413251cbf30e620595c7a41b3887f03da04579c0e6b0d6a06b4b2"
+checksum = "41d60ef07df457506a0a1a2073112eb4aae5733dbd2813c3da77d1b0fd441158"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -3063,9 +3063,9 @@ dependencies = [
 
 [[package]]
 name = "regex-syntax"
-version = "0.8.11"
+version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+checksum = "d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6"
 
 [[package]]
 name = "relative-path"
@@ -5100,9 +5100,9 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "uuid"
-version = "1.29.2"
+version = "1.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bed99139f7dac9b5cfe5f17be4d66dc7079a34dee1d74bcc77217119240e267c"
+checksum = "3c14b15dffa2f4bd712103e857140aa04a4f2ff6e955c77d7eb8e53ee02a3b64"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
@@ -5591,9 +5591,9 @@ dependencies = [
 
 [[package]]
 name = "zen-engine"
-version = "2.1.7"
+version = "2.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2541462aed73c26a2201a8db91f0689de8699dc99185c2bec9a6f3302bd4cfe2"
+checksum = "e33427c23b6d9ce2236e04763192a172e12097bd436dfe83e3a5d1065c2003f1"
 dependencies = [
  "ahash",
  "anyhow",
@@ -5634,9 +5634,9 @@ dependencies = [
 
 [[package]]
 name = "zen-expression"
-version = "2.1.7"
+version = "2.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "407253ca206e7a5e840fd53724ec441ec6e6e83017b0f430a255b6385af3069a"
+checksum = "f6c8f4f27ae8a057be0ac41250937f2f078ff6acd1a335b98d855ebcdbc8644d"
 dependencies = [
  "ahash",
  "anyhow",
@@ -5665,9 +5665,9 @@ dependencies = [
 
 [[package]]
 name = "zen-macros"
-version = "2.1.7"
+version = "2.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7806a35828dac9cf36c008a8f9b3ad353bcf615684034aff40e85970829153d"
+checksum = "6eb7d142beb6e27c600e29c49f57ead5d3554519dc95049cf63257792c81a8ef"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5677,9 +5677,9 @@ dependencies = [
 
 [[package]]
 name = "zen-tmpl"
-version = "2.1.7"
+version = "2.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35a830c4da15fc9e9dfe0355f5328dc692dd484dc96f9cc7cf1abce45261e739"
+checksum = "46a67777af35f2d3ed851dc2d8132e7a6052afbcc3a0995f0ac3ad7d60f3ae70"
 dependencies = [
  "serde",
  "serde_json",
@@ -5689,9 +5689,9 @@ dependencies = [
 
 [[package]]
 name = "zen-types"
-version = "2.1.7"
+version = "2.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c65df008c066d8223c3dc5b3c9fecb7462f6b954d9fde9c53eaaa5e36d572510"
+checksum = "6d8993492b9169c3bf3b1fa1165cda1823a1fba880af9afbfa13177656b03ac2"
 dependencies = [
  "ahash",
  "hipstr",
